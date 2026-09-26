@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1080" viewBox="0 0 1600 1080" role="img" aria-labelledby="title description">
+  <title id="title">2500 Heritage website design directions</title>
+  <desc id="description">Side-by-side comparison of a modern sports club direction and a premium heritage direction, both using the current forest green, court green, cream, and gold palette.</desc>
+  <defs>
+    <linearGradient id="court" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#4C7A63"/><stop offset="1" stop-color="#20392F"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#E3B655"/><stop offset="1" stop-color="#D3A53A"/></linearGradient>
+    <linearGradient id="panel-photo" x1="0" y1="0" x2="0.9" y2="1"><stop stop-color="#7FA98F"/><stop offset="1" stop-color="#20392F"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="12" stdDeviation="15" flood-color="#17302A" flood-opacity=".10"/></filter>
+    <clipPath id="clip-a"><rect x="40" y="184" width="740" height="832" rx="24"/></clipPath>
+    <clipPath id="clip-b"><rect x="820" y="184" width="740" height="832" rx="24"/></clipPath>
+  </defs>
+
+  <rect width="1600" height="1080" fill="#F4F1EA"/>
+  <text x="48" y="59" fill="#4C7A63" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700" letter-spacing="3">2500 HERITAGE  /  DESIGN PREVIEW</text>
+  <text x="48" y="108" fill="#17302A" font-family="'Bricolage Grotesque',Arial,sans-serif" font-size="38" font-weight="700" letter-spacing="-1.4">Two ways to tell the same story.</text>
+  <text x="48" y="142" fill="#17302A" fill-opacity=".66" font-family="Inter,Arial,sans-serif" font-size="16">Same forest green, court green, cream, and gold. Different mood and layout.</text>
+
+  <text x="48" y="169" fill="#17302A" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700" letter-spacing="2">A  /  MODERN SPORTS CLUB</text>
+  <text x="828" y="169" fill="#17302A" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700" letter-spacing="2">B  /  PREMIUM HERITAGE</text>
+
+  <!-- Direction A: energetic, high-contrast sports club -->
+  <rect x="40" y="184" width="740" height="832" rx="24" fill="#FFFFFF" filter="url(#shadow)"/>
+  <g clip-path="url(#clip-a)">
+    <rect x="40" y="184" width="740" height="74" fill="#17302A"/>
+    <text x="70" y="230" fill="#FFFFFF" font-family="'Bricolage Grotesque',Arial,sans-serif" font-size="22" font-weight="800" letter-spacing="-.7">2500 <tspan fill="#D3A53A">HERITAGE</tspan></text>
+    <text x="358" y="228" fill="#FFFFFF" fill-opacity=".72" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="600">STORY</text>
+    <text x="416" y="228" fill="#FFFFFF" fill-opacity=".72" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="600">SPORTS</text>
+    <text x="484" y="228" fill="#FFFFFF" fill-opacity=".72" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="600">FACILITY</text>
+    <rect x="644" y="204" width="108" height="34" rx="17" fill="#D3A53A"/>
+    <text x="698" y="226" text-anchor="middle" fill="#17302A" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="700">BOOK A COURT</text>
+
+    <rect x="40" y="258" width="740" height="432" fill="#17302A"/>
+    <circle cx="702" cy="292" r="184" fill="none" stroke="#D3A53A" stroke-opacity=".18" stroke-width="1.5"/>
+    <circle cx="702" cy="292" r="140" fill="none" stroke="#FFFFFF" stroke-opacity=".10" stroke-width="1.5"/>
+    <rect x="72" y="292" width="122" height="25" rx="12.5" fill="#D3A53A"/>
+    <text x="133" y="309" text-anchor="middle" fill="#17302A" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="800" letter-spacing="1">COMING SOON</text>
+    <text x="72" y="372" fill="#FFFFFF" font-family="'Bricolage Grotesque',Arial,sans-serif" font-size="42" font-weight="700" letter-spacing="-1.5">A place with</text>
+    <text x="72" y="418" fill="#FFFFFF" font-family="'Bricolage Grotesque',Arial,sans-serif" font-size="42" font-weight="700" letter-spacing="-1.5">a past, now</text>
+    <text x="72" y="464" fill="#E3B655" font-family="'Bricolage Grotesque',Arial,sans-serif" font-size="42" font-weight="700" letter-spacing="-1.5">in play.</text>
+    <text x="74" y="498" fill="#FFFFFF" fill-opacity=".68" font-family="Inter,Arial,sans-serif" font-size="12">A new home for pickleball, badminton, and taekwondo.</text>
+    <rect x="72" y="526" width="145" height="42" rx="21" fill="#D3A53A"/>
+    <text x="144" y="552" text-anchor="middle" fill="#17302A" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700">RESERVE A COURT  →</text>
+    <rect x="228" y="526" width="124" height="42" rx="21" fill="#FFFFFF" fill-opacity=".06" stroke="#FFFFFF" stroke-opacity=".3"/>
+    <text x="290" y="552" text-anchor="middle" fill="#FFFFFF" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="600">OUR STORY</text>
+    <rect x="432" y="306" width="294" height="300" rx="26" fill="url(#court)" stroke="#FFFFFF" stroke-opacity=".24"/>
+    <rect x="453" y="327" width="252" height="258" rx="3" fill="none" stroke="#FFFFFF" stroke-opacity=".72" stroke-width="2"/>
+    <line x1="579" y1="327" x2="579" y2="405" stroke="#FFFFFF" stroke-opacity=".72" stroke-width="2"/>
+    <line x1="579" y1="507" x2="579" y2="585" stroke="#FFFFFF" stroke-opacity=".72" stroke-width="2"/>
+    <line x1="453" y1="456" x2="705" y2="456" stroke="#FFFFFF" stroke-opacity=".72" stroke-width="2"/>
+    <line x1="453" y1="405" x2="705" y2="405" stroke="#FFFFFF" stroke-opacity=".45" stroke-width="2"/>
+    <line x1="453" y1="507" x2="705" y2="507" stroke="#FFFFFF" stroke-opacity=".45" stroke-width="2"/>
+    <line x1="453" y1="456" x2="705" y2="456" stroke="#D3A53A" stroke-width="3"/>
+    <circle cx="622" cy="445" r="9" fill="#D3A53A"/>
+    <text x="72" y="632" fill="#E3B655" font-family="'Bricolage Grotesque',Arial,sans-serif" font-size="19" font-weight="700">3</text>
+    <text x="72" y="652" fill="#FFFFFF" fill-opacity=".56" font-family="Inter,Arial,sans-serif" font-size="10">SPORTS</text>
+    <line x1="166" y1="624" x2="166" y2="660" stroke="#FFFFFF" stroke-opacity=".18"/>
+    <text x="192" y="632" fill="#E3B655" font-family="'Bricolage Grotesque',Arial,sans-serif" font-size="19" font-weight="700">1</text>
+    <text x="192" y="652" fill="#FFFFFF" fill-opacity=".56" font-family="Inter,Arial,sans-serif" font-size="10">HERITAGE HOME</text>
+    <line x1="324" y1="624" x2="324" y2="660" stroke="#FFFFFF" stroke-opacity=".18"/>
+    <text x="350" y="632" fill="#E3B655" font-family="'Bricolage Grotesque',Arial,sans-serif" font-size="19" font-weight="700">LA UNION</text>
+    <text x="350" y="652" fill="#FFFFFF" fill-opacity=".56" font-family="Inter,Arial,sans-serif" font-size="10">SAN FERNANDO CITY</text>
+
+    <rect x="40" y="690" width="740" height="326" fill="#FFFFFF"/>
+    <text x="72" y="740" fill="#4C7A63" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="2">PICK YOUR GAME</text>
+    <text x="72" y="775" fill="#17302A" font-family="'Bricolage Grotesque',Arial,sans-serif" font-size="27" font-weight="700" letter-spacing="-.8">One roof. Three ways to play.</text>
+    <g font-family="Inter,Arial,sans-serif">
+      <rect x="72" y="800" width="210" height="154" rx="17" fill="#F4F1EA" stroke="#17302A" stroke-opacity=".08"/>
+      <circle cx="100" cy="830" r="13" fill="#D3A53A" fill-opacity=".24"/><text x="100" y="834" text-anchor="middle" fill="#17302A" font-size="9" font-weight="700">01</text>
+      <text x="94" y="874" fill="#17302A" font-size="15" font-weight="700">Pickleball</text><text x="94" y="897" fill="#17302A" fill-opacity=".58" font-size="10">Fast rallies, easy to love.</text>
+      <rect x="297" y="800" width="210" height="154" rx="17" fill="#F4F1EA" stroke="#17302A" stroke-opacity=".08"/>
+      <circle cx="325" cy="830" r="13" fill="#D3A53A" fill-opacity=".24"/><text x="325" y="834" text-anchor="middle" fill="#17302A" font-size="9" font-weight="700">02</text>
+      <text x="319" y="874" fill="#17302A" font-size="15" font-weight="700">Badminton</text><text x="319" y="897" fill="#17302A" fill-opacity=".58" font-size="10">Play your way, rain or shine.</text>
+      <rect x="522" y="800" width="210" height="154" rx="17" fill="#F4F1EA" stroke="#17302A" stroke-opacity=".08"/>
+      <circle cx="550" cy="830" r="13" fill="#D3A53A" fill-opacity=".24"/><text x="550" y="834" text-anchor="middle" fill="#17302A" font-size="9" font-weight="700">03</text>
+      <text x="544" y="874" fill="#17302A" font-size="15" font-weight="700">Taekwondo</text><text x="544" y="897" fill="#17302A" fill-opacity=".58" font-size="10">Space to focus and grow.</text>
+    </g>
+  </g>
+
+  <!-- Direction B: calm, editorial heritage presentation -->
+  <rect x="820" y="184" width="740" height="832" rx="24" fill="#FFFFFF" filter="url(#shadow)"/>
+  <g clip-path="url(#clip-b)">
+    <rect x="820" y="184" width="740" height="74" fill="#FFFFFF"/>
+    <text x="850" y="230" fill="#17302A" font-family="Georgia,serif" font-size="22" font-weight="700" letter-spacing="-.7">2500 <tspan fill="#B3872B">HERITAGE</tspan></text>
+    <text x="1141" y="228" fill="#17302A" fill-opacity=".67" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="600">OUR STORY</text>
+    <text x="1224" y="228" fill="#17302A" fill-opacity=".67" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="600">THE SPORTS</text>
+    <text x="1322" y="228" fill="#17302A" fill-opacity=".67" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="600">VISIT</text>
+    <rect x="1430" y="204" width="100" height="34" rx="17" fill="#17302A"/>
+    <text x="1480" y="226" text-anchor="middle" fill="#FFFFFF" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="700">BOOK NOW</text>
+
+    <rect x="820" y="258" width="740" height="432" fill="#F4F1EA"/>
+    <path d="M820 258H1560V690H820Z" fill="#F4F1EA"/>
+    <text x="858" y="318" fill="#4C7A63" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="2">A HERITAGE PLACE, REIMAGINED</text>
+    <text x="858" y="382" fill="#17302A" font-family="Georgia,serif" font-size="43" font-weight="400" letter-spacing="-1.3">Where the old</text>
+    <text x="858" y="430" fill="#17302A" font-family="Georgia,serif" font-size="43" font-weight="400" letter-spacing="-1.3">rice mill finds</text>
+    <text x="858" y="478" fill="#B3872B" font-family="Georgia,serif" font-size="43" font-style="italic" font-weight="400" letter-spacing="-1.3">new life.</text>
+    <line x1="858" y1="502" x2="912" y2="502" stroke="#D3A53A" stroke-width="2"/>
+    <text x="858" y="532" fill="#17302A" fill-opacity=".66" font-family="Inter,Arial,sans-serif" font-size="11">A gathering place for play, practice, and community</text>
+    <text x="858" y="550" fill="#17302A" fill-opacity=".66" font-family="Inter,Arial,sans-serif" font-size="11">in San Fernando City, La Union.</text>
+    <rect x="858" y="576" width="138" height="42" rx="4" fill="#17302A"/>
+    <text x="927" y="602" text-anchor="middle" fill="#FFFFFF" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="700" letter-spacing=".3">EXPLORE THE CLUB</text>
+    <text x="1012" y="602" fill="#17302A" font-family="Inter,Arial,sans-serif" font-size="11" font-weight="700">OUR STORY  ↗</text>
+
+    <rect x="1192" y="292" width="326" height="336" rx="3" fill="url(#panel-photo)"/>
+    <rect x="1207" y="307" width="296" height="306" rx="2" fill="none" stroke="#F4F1EA" stroke-opacity=".55"/>
+    <rect x="1236" y="378" width="238" height="190" fill="#17302A" fill-opacity=".28"/>
+    <path d="M1220 384L1355 324L1490 384Z" fill="#D3A53A" fill-opacity=".88"/>
+    <path d="M1236 384H1474V400H1236Z" fill="#17302A" fill-opacity=".75"/>
+    <rect x="1251" y="410" width="208" height="158" fill="#F4F1EA" fill-opacity=".82"/>
+    <rect x="1267" y="428" width="56" height="140" fill="#4C7A63" fill-opacity=".75"/>
+    <rect x="1335" y="428" width="42" height="140" fill="#4C7A63" fill-opacity=".58"/>
+    <rect x="1389" y="428" width="54" height="140" fill="#4C7A63" fill-opacity=".75"/>
+    <line x1="1280" y1="430" x2="1280" y2="568" stroke="#F4F1EA" stroke-opacity=".72" stroke-width="2"/>
+    <line x1="1307" y1="430" x2="1307" y2="568" stroke="#F4F1EA" stroke-opacity=".72" stroke-width="2"/>
+    <line x1="1402" y1="430" x2="1402" y2="568" stroke="#F4F1EA" stroke-opacity=".72" stroke-width="2"/>
+    <line x1="1430" y1="430" x2="1430" y2="568" stroke="#F4F1EA" stroke-opacity=".72" stroke-width="2"/>
+    <rect x="1213" y="595" width="284" height="42" fill="#17302A"/>
+    <text x="1355" y="621" text-anchor="middle" fill="#F4F1EA" font-family="Inter,Arial,sans-serif" font-size="9" font-weight="600" letter-spacing="1.4">A NEW CHAPTER FOR A LOCAL LANDMARK</text>
+
+    <rect x="820" y="690" width="740" height="326" fill="#FFFFFF"/>
+    <text x="858" y="740" fill="#4C7A63" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" letter-spacing="2">ROOTED IN PLACE</text>
+    <text x="858" y="779" fill="#17302A" font-family="Georgia,serif" font-size="29" font-weight="400" letter-spacing="-.6">A familiar landmark, a new way to gather.</text>
+    <line x1="858" y1="802" x2="1522" y2="802" stroke="#17302A" stroke-opacity=".12"/>
+    <g font-family="Inter,Arial,sans-serif">
+      <text x="858" y="841" fill="#B3872B" font-family="Georgia,serif" font-size="23">01</text>
+      <text x="900" y="840" fill="#17302A" font-size="13" font-weight="700">KEEP THE CHARACTER</text>
+      <text x="900" y="861" fill="#17302A" fill-opacity=".6" font-size="10">The old rice mill remains part of the story.</text>
+      <line x1="858" y1="881" x2="1178" y2="881" stroke="#17302A" stroke-opacity=".12"/>
+      <text x="858" y="919" fill="#B3872B" font-family="Georgia,serif" font-size="23">02</text>
+      <text x="900" y="918" fill="#17302A" font-size="13" font-weight="700">MAKE ROOM TO PLAY</text>
+      <text x="900" y="939" fill="#17302A" fill-opacity=".6" font-size="10">Three sports share one welcoming home.</text>
+      <line x1="858" y1="959" x2="1178" y2="959" stroke="#17302A" stroke-opacity=".12"/>
+    </g>
+    <rect x="1210" y="827" width="312" height="145" rx="3" fill="#17302A"/>
+    <text x="1236" y="861" fill="#D3A53A" font-family="Georgia,serif" font-size="24">“</text>
+    <text x="1260" y="862" fill="#FFFFFF" font-family="Georgia,serif" font-size="16">A place for families, friends,</text>
+    <text x="1260" y="885" fill="#FFFFFF" font-family="Georgia,serif" font-size="16">and athletes to make new</text>
+    <text x="1260" y="908" fill="#FFFFFF" font-family="Georgia,serif" font-size="16">memories together.</text>
+    <line x1="1236" y1="931" x2="1496" y2="931" stroke="#FFFFFF" stroke-opacity=".18"/>
+    <text x="1236" y="953" fill="#FFFFFF" fill-opacity=".58" font-family="Inter,Arial,sans-serif" font-size="9" font-weight="600" letter-spacing="1.3">SAN FERNANDO CITY, LA UNION</text>
+  </g>
+  <text x="48" y="1054" fill="#17302A" fill-opacity=".54" font-family="Inter,Arial,sans-serif" font-size="12">Choose the direction you want, and I can apply it across the full site.</text>
+</svg>

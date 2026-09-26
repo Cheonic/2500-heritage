@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+@theme {
+  /* Keep the Heritage forest, court green, cream, and gold palette. */
+  --color-ink: #17302A;
+  --color-ink-soft: #20392F;
+  --color-court: #4C7A63;
+  --color-court-light: #7FA98F;
+  --color-sand: #FFFFFF;
+  --color-sand-dim: #F4F1EA;
+  --color-citrus: #D3A53A;
+  --color-citrus-dim: #B3872B;
+  --color-tide: #A13B49;
+  --color-tide-light: #E3B655;
+  --color-clay: #13231D;
+
+  --font-display: "Bricolage Grotesque", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --radius-card: 1.5rem;
+}
+
+@layer base {
+  * {
+    border-color: rgb(23 48 42 / 12%);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 6rem;
+  }
+
+  body {
+    background-color: var(--color-sand);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.035em;
+  }
+
+  button, input, select, textarea {
+    font: inherit;
+  }
+
+  button:not(:disabled), a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--color-citrus);
+    outline-offset: 3px;
+    border-radius: 6px;
+  }
+
+  ::selection {
+    background: var(--color-citrus);
+    color: var(--color-ink);
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
