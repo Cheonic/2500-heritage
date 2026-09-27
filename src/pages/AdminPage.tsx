@@ -1,28 +1,67 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 import Container from '../components/ui/Container'
-import SectionHeading from '../components/ui/SectionHeading'
 import Button from '../components/ui/Button'
-import { bookingCourts, hourSlots, getDayOptions, formatFullDate, isSlotPast, type DayOption } from '../data/booking'
+import ReclubLogo from '../components/ui/ReclubLogo'
+import { bookingCourts, saveBookingCourts, hourSlots, getDayOptions, formatFullDate, isSlotPast, type BookingCourt, type DayOption } from '../data/booking'
 import {
   addBooking,
   updateBooking,
+  updateCustomerBookingsByReference,
   removeBooking,
   addBlockedSlot,
   removeBlockedSlot,
   getBookingAt,
   getBlockAt,
+  getBookings,
   findOverlappingBooking,
   findOverlappingBlock,
   useBookingStoreVersion,
   type StoredBooking,
 } from '../data/store'
 import { isAdminUnlocked, tryUnlockAdmin, lockAdmin } from '../data/adminAuth'
+import { getPaymentQrCode, savePaymentQrCode } from '../data/paymentQr'
 
 interface Range {
   courtId: string
   startHour: number
   endHour: number // exclusive
 }
+
+function resizePaymentQr(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file)
+    const image = new Image()
+    image.onload = () => {
+      const scale = Math.min(1, 1200 / Math.max(image.naturalWidth, image.naturalHeight))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(image.naturalWidth * scale)
+      canvas.height = Math.round(image.naturalHeight * scale)
+      const context = canvas.getContext('2d')
+      if (!context) {
+        URL.revokeObjectURL(objectUrl)
+        reject(new Error('Could not process this image.'))
+        return
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      URL.revokeObjectURL(objectUrl)
+      resolve(canvas.toDataURL('image/png'))
+    }
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      reject(new Error('Could not read this image.'))
+    }
+    image.src = objectUrl
+  })
+}
+
+type AdminSectionId = 'bookings' | 'payments' | 'courts' | 'payment-qr'
+
+const adminSections: { id: AdminSectionId; label: string }[] = [
+  { id: 'bookings', label: 'Bookings calendar' },
+  { id: 'payments', label: 'Payment review' },
+  { id: 'courts', label: 'Courts & pricing' },
+  { id: 'payment-qr', label: 'Payment QR setup' },
+]
 
 export default function AdminPage() {
   const [unlocked, setUnlocked] = useState(isAdminUnlocked)
@@ -76,7 +115,23 @@ function AdminLogin({ onUnlock }: { onUnlock: () => void }) {
 }
 
 function AdminDashboard({ onLock }: { onLock: () => void }) {
-  useBookingStoreVersion() // re-render on any booking/block change
+  const storeVersion = useBookingStoreVersion() // re-render on any booking/block change
+  const [activeSection, setActiveSection] = useState<AdminSectionId>('bookings')
+  const reservedGroups = useMemo(() => {
+    const groups = new Map<string, StoredBooking[]>()
+    getBookings()
+      .filter(
+        (booking) =>
+          booking.source === 'customer' &&
+          (booking.status === 'reserved' || booking.status === 'pending'),
+      )
+      .forEach((booking) => {
+        const group = groups.get(booking.reference) ?? []
+        group.push(booking)
+        groups.set(booking.reference, group)
+      })
+    return [...groups.entries()].map(([reference, bookings]) => ({ reference, bookings }))
+  }, [storeVersion])
   const [weekOffset, setWeekOffset] = useState(0)
   const days = useMemo(() => getDayOptions(7, weekOffset * 7), [weekOffset])
   const [activeDay, setActiveDay] = useState<DayOption>(days[0])
@@ -86,9 +141,105 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
   const [assignFormOpen, setAssignFormOpen] = useState(false)
   const [editingBooking, setEditingBooking] = useState<StoredBooking | null>(null)
   const [viewingBlockId, setViewingBlockId] = useState<string | null>(null)
+  const [courtDraft, setCourtDraft] = useState<BookingCourt[]>(() => bookingCourts.map((court) => ({ ...court })))
+  const [courtSettingsError, setCourtSettingsError] = useState('')
+  const [courtSettingsSaved, setCourtSettingsSaved] = useState(false)
+  const [savedPaymentQr, setSavedPaymentQr] = useState<string | null>(() => getPaymentQrCode())
+  const [paymentQrDraft, setPaymentQrDraft] = useState<string | null>(null)
+  const [paymentQrFileName, setPaymentQrFileName] = useState('')
+  const [paymentQrError, setPaymentQrError] = useState('')
+  const [paymentQrStatus, setPaymentQrStatus] = useState('')
+  const [isPreparingPaymentQr, setIsPreparingPaymentQr] = useState(false)
+
+  function saveCourtSettings(e: FormEvent) {
+    e.preventDefault()
+    if (courtDraft.some((court) => !court.name.trim() || !Number.isFinite(court.rate) || court.rate < 0)) {
+      setCourtSettingsError('Enter a name and a valid hourly rate for every court.')
+      setCourtSettingsSaved(false)
+      return
+    }
+    saveBookingCourts(courtDraft)
+    setCourtSettingsError('')
+    setCourtSettingsSaved(true)
+  }
+
+  async function preparePaymentQr(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0]
+    const input = event.currentTarget
+    if (!file) return
+    setPaymentQrError('')
+    setPaymentQrStatus('')
+    setPaymentQrDraft(null)
+    setPaymentQrFileName('')
+    if (!file.type.startsWith('image/')) {
+      setPaymentQrError('Choose a PNG, JPG, or WEBP image.')
+      input.value = ''
+      return
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setPaymentQrError('The image is too large. Choose a file under 8 MB.')
+      input.value = ''
+      return
+    }
+
+    setIsPreparingPaymentQr(true)
+    try {
+      setPaymentQrDraft(await resizePaymentQr(file))
+      setPaymentQrFileName(file.name)
+    } catch (error) {
+      setPaymentQrError(error instanceof Error ? error.message : 'Could not process this image.')
+      setPaymentQrDraft(null)
+      setPaymentQrFileName('')
+    } finally {
+      setIsPreparingPaymentQr(false)
+      input.value = ''
+    }
+  }
+
+  function commitPaymentQr() {
+    if (!paymentQrDraft) return
+    try {
+      savePaymentQrCode(paymentQrDraft)
+      setSavedPaymentQr(paymentQrDraft)
+      setPaymentQrDraft(null)
+      setPaymentQrStatus('Payment QR code saved.')
+      setPaymentQrError('')
+    } catch (error) {
+      setPaymentQrError(error instanceof Error ? error.message : 'Could not save the QR code.')
+      setPaymentQrStatus('')
+    }
+  }
+
+  function removePaymentQr() {
+    try {
+      savePaymentQrCode(null)
+      setSavedPaymentQr(null)
+      setPaymentQrDraft(null)
+      setPaymentQrFileName('')
+      setPaymentQrStatus('Payment QR code removed.')
+      setPaymentQrError('')
+    } catch (error) {
+      setPaymentQrError(error instanceof Error ? error.message : 'Could not remove the QR code.')
+      setPaymentQrStatus('')
+    }
+  }
+
+  function approvePayment(reference: string) {
+    updateCustomerBookingsByReference(reference, 'confirmed')
+  }
+
+  function rejectPayment(reference: string) {
+    updateCustomerBookingsByReference(reference, 'rejected')
+  }
 
   function switchDay(d: DayOption) {
     setActiveDay(d)
+    setSelection(null)
+    setAssignFormOpen(false)
+  }
+
+  function navigateTo(section: AdminSectionId) {
+    setActiveSection(section)
     setSelection(null)
     setAssignFormOpen(false)
   }
@@ -142,18 +293,268 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
     setSelection(null)
   }
 
+  function assignReclubSelection() {
+    if (!selection) return
+    const clash =
+      findOverlappingBooking(
+        activeDayData.iso,
+        selection.courtId,
+        selection.startHour,
+        selection.endHour,
+      ) ||
+      findOverlappingBlock(
+        activeDayData.iso,
+        selection.courtId,
+        selection.startHour,
+        selection.endHour,
+      )
+    if (clash) return
+
+    const court = bookingCourts.find((item) => item.id === selection.courtId)
+    addBooking({
+      courtId: selection.courtId,
+      courtName: court?.name ?? selection.courtId,
+      dayIso: activeDayData.iso,
+      startHour: selection.startHour,
+      endHour: selection.endHour,
+      rate: court?.rate ?? 0,
+      name: 'Reclub',
+      mobile: '',
+      notes: 'Assigned from Reclub',
+      source: 'reclub',
+      status: 'confirmed',
+    })
+    setSelection(null)
+  }
+
   return (
-    <Container className="flex flex-col gap-8 py-10">
+    <Container className="py-8 sm:py-10">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <SectionHeading
-          title="Manage bookings."
-          lede="Block off maintenance time, walk in a customer directly, or reschedule an existing booking."
-        />
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-court">Staff workspace</p>
+          <h1 className="mt-1 font-display text-2xl font-semibold text-ink sm:text-3xl">Admin dashboard</h1>
+          <p className="mt-2 max-w-2xl text-sm text-ink/60">Manage bookings, payment reviews, and court settings.</p>
+        </div>
         <Button variant="secondary" className="!border-ink/15 !bg-sand !text-ink hover:!bg-sand-dim shrink-0 self-start" onClick={onLock}>
-          Lock
+          Lock admin
         </Button>
       </div>
 
+      <div className="mt-7 grid min-w-0 gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
+        <aside className="h-fit rounded-card border border-ink/10 bg-sand p-3 shadow-xl shadow-ink/5 sm:p-4 lg:sticky lg:top-24">
+          <p className="px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-ink/45">Navigation</p>
+          <nav aria-label="Admin sections" className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible">
+            {adminSections.map((section) => {
+              const active = activeSection === section.id
+              return (
+                <button
+                  key={section.id}
+                  type="button"
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => navigateTo(section.id)}
+                  className={`flex min-h-11 min-w-max items-center justify-between gap-3 rounded-xl px-4 py-2.5 text-left text-sm font-semibold transition-colors lg:w-full ${
+                    active
+                      ? 'bg-court text-white'
+                      : 'text-ink/65 hover:bg-sand-dim hover:text-ink'
+                  }`}
+                >
+                  {section.label}
+                  {section.id === 'payments' && reservedGroups.length > 0 && (
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${active ? 'bg-white/20 text-white' : 'bg-citrus text-ink'}`}>
+                      {reservedGroups.length}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </nav>
+        </aside>
+
+        <main className="min-w-0">
+      {activeSection === 'courts' && (
+      <>
+      <form onSubmit={saveCourtSettings} className="rounded-card border border-ink/10 bg-sand p-5 shadow-xl shadow-ink/5 sm:p-6">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="font-display text-base font-semibold text-ink">Court names & rates</h2>
+            <p className="mt-1 text-sm text-ink/60">Saved in this browser and shown on its booking calendar.</p>
+          </div>
+          <Button type="submit" variant="primary" className="mt-3 self-start sm:mt-0">Save changes</Button>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          {courtDraft.map((court) => (
+            <div key={court.id} className="grid grid-cols-[minmax(0,1fr)_120px] items-end gap-3 rounded-xl border border-ink/10 bg-white p-3">
+              <Field label={`Court ${court.id} name`}>
+                <input
+                  required
+                  value={court.name}
+                  onChange={(e) => {
+                    setCourtSettingsSaved(false)
+                    setCourtDraft((current) => current.map((item) => item.id === court.id ? { ...item, name: e.target.value } : item))
+                  }}
+                  className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+                />
+              </Field>
+              <Field label="Rate / hour (₱)">
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={Number.isFinite(court.rate) ? court.rate : ''}
+                  onChange={(e) => {
+                    setCourtSettingsSaved(false)
+                    setCourtDraft((current) => current.map((item) => item.id === court.id ? { ...item, rate: e.target.value === '' ? Number.NaN : Number(e.target.value) } : item))
+                  }}
+                  className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+                />
+              </Field>
+            </div>
+          ))}
+        </div>
+        {courtSettingsError && <p role="alert" className="mt-3 text-sm font-medium text-tide">{courtSettingsError}</p>}
+        {courtSettingsSaved && <p role="status" className="mt-3 text-sm font-medium text-court">Court settings saved.</p>}
+      </form>
+      </>
+      )}
+
+      {activeSection === 'payment-qr' && (
+      <section className="rounded-card border border-ink/10 bg-sand p-5 shadow-xl shadow-ink/5 sm:p-6">
+        <div>
+          <h2 className="font-display text-base font-semibold text-ink">Payment QR code</h2>
+          <p className="mt-1 text-sm text-ink/60">Upload the GCash or Maya QR shown to customers in the payment step.</p>
+        </div>
+
+        <div className="mt-5 grid gap-5 md:grid-cols-[minmax(0,1fr)_220px]">
+          <div>
+            <Field label="Upload QR image">
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                disabled={isPreparingPaymentQr}
+                onChange={(event) => void preparePaymentQr(event)}
+                className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 text-sm text-ink transition-colors file:mr-3 file:rounded-full file:border-0 file:bg-citrus file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-ink"
+              />
+            </Field>
+            {paymentQrFileName && <p className="mt-2 text-xs text-ink/50">Selected: {paymentQrFileName}</p>}
+            <p className="mt-2 text-xs text-ink/50">PNG, JPG, or WEBP · maximum 8 MB. Saved in this browser.</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button type="button" variant="primary" onClick={commitPaymentQr} disabled={!paymentQrDraft || isPreparingPaymentQr}>
+                {isPreparingPaymentQr ? 'Preparing image…' : 'Save QR code'}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="!border-ink/15 !bg-white !text-ink hover:!bg-sand-dim"
+                onClick={removePaymentQr}
+                disabled={!savedPaymentQr && !paymentQrDraft}
+              >
+                Remove QR code
+              </Button>
+            </div>
+            {paymentQrError && <p role="alert" className="mt-3 text-sm font-medium text-tide">{paymentQrError}</p>}
+            {paymentQrStatus && <p role="status" className="mt-3 text-sm font-medium text-court">{paymentQrStatus}</p>}
+          </div>
+
+          <div className="flex min-h-48 items-center justify-center rounded-2xl border border-ink/10 bg-white p-3">
+            {paymentQrDraft || savedPaymentQr ? (
+              <div className="text-center">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink/45">
+                  {paymentQrDraft ? 'New image preview' : 'Current QR code'}
+                </p>
+                <img
+                  src={paymentQrDraft ?? savedPaymentQr ?? undefined}
+                  alt="Payment QR code preview"
+                  className="mx-auto max-h-52 max-w-full rounded-xl object-contain"
+                />
+              </div>
+            ) : (
+              <p className="text-center text-sm text-ink/45">No payment QR uploaded yet.</p>
+            )}
+          </div>
+        </div>
+      </section>
+      )}
+
+      {activeSection === 'payments' && (
+      <section className="rounded-card border border-ink/10 bg-sand p-5 shadow-xl shadow-ink/5 sm:p-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-display text-base font-semibold text-ink">Payment verification</h2>
+            <p className="mt-1 text-sm text-ink/60">Check the GCash or Maya transaction reference before confirming each reservation.</p>
+          </div>
+          <span className="rounded-full bg-citrus/20 px-3 py-1 text-xs font-semibold text-ink">
+            {reservedGroups.length} awaiting review
+          </span>
+        </div>
+
+        {reservedGroups.length === 0 ? (
+          <p className="mt-5 rounded-xl bg-white px-4 py-5 text-center text-sm text-ink/55">
+            No reservations are waiting for payment verification.
+          </p>
+        ) : (
+          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+            {reservedGroups.map(({ reference, bookings }) => {
+              const customer = bookings[0]
+              const total = bookings.reduce(
+                (sum, booking) => sum + (booking.endHour - booking.startHour) * booking.rate,
+                0,
+              )
+              return (
+                <article key={reference} className="rounded-2xl border border-ink/10 bg-white p-4 sm:p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-ink">{customer.name}</h3>
+                      <p className="mt-1 text-xs text-ink/55">{reference} · {customer.mobile}</p>
+                      <p className="mt-1 text-xs font-semibold text-court">
+                        {customer.sport ?? 'Sport not specified'} · Reserved
+                      </p>
+                      <p className="mt-2 text-xs text-ink/60">
+                        Payment reference: <span className="font-semibold text-ink">{customer.paymentReference || 'Not provided'}</span>
+                      </p>
+                    </div>
+                    <span className="font-display text-base font-semibold text-ink">₱{total.toLocaleString()}</span>
+                  </div>
+                  <div className="mt-3 space-y-1 text-sm text-ink/65">
+                    {bookings.map((booking) => (
+                      <p key={booking.id}>
+                        {booking.courtName} · {formatFullDate(new Date(`${booking.dayIso}T00:00:00`))} ·{' '}
+                        {rangeLabel(booking.startHour, booking.endHour)}
+                      </p>
+                    ))}
+                  </div>
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      type="button"
+                      variant="primary"
+                      className="w-full sm:flex-1"
+                      onClick={() => approvePayment(reference)}
+                    >
+                      Approve and confirm
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="w-full !border-tide/30 !bg-white !text-tide hover:!bg-tide/5 sm:w-auto"
+                      onClick={() => rejectPayment(reference)}
+                    >
+                      Reject
+                    </Button>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </section>
+      )}
+
+      {activeSection === 'bookings' && (
+      <>
+      <div className="mb-5">
+        <h2 className="font-display text-lg font-semibold text-ink">Bookings calendar</h2>
+        <p className="mt-1 text-sm text-ink/60">Select a slot to create a booking or block time; select an existing entry to manage it.</p>
+      </div>
       <div className="overflow-hidden rounded-card border border-ink/10 bg-sand shadow-xl shadow-ink/5">
         <div className="bg-ink px-4 py-5 sm:px-6">
           <div className="flex items-center justify-between gap-3">
@@ -205,6 +606,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-ink/10 px-4 py-3 text-xs text-ink/70 sm:px-6">
           <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-ink/50">Legend</span>
           <LegendSwatch className="border border-ink/20 bg-sand" label="Available" />
+          <LegendSwatch className="bg-citrus" label="Reserved" />
           <LegendSwatch className="bg-tide" label="Booked" />
           <LegendSwatch className="bg-ink/50" label="Blocked" />
           <LegendSwatch className="bg-citrus" label="Selecting" />
@@ -247,9 +649,12 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
                     let label = ''
                     if (past) {
                       cls += 'cursor-not-allowed border-ink/5 bg-sand-dim text-ink/25'
+                    } else if (booking?.status !== 'confirmed' && booking) {
+                      cls += 'cursor-pointer border-citrus bg-citrus text-ink'
+                      label = 'R'
                     } else if (booking) {
                       cls += 'cursor-pointer border-tide bg-tide text-sand'
-                      label = booking.name.split(' ')[0]
+                      label = booking.source === 'reclub' ? '' : booking.name.split(' ')[0]
                     } else if (block) {
                       cls += 'cursor-pointer border-ink/50 bg-ink/50 text-sand'
                       label = '⛔'
@@ -269,11 +674,13 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
                         className={cls}
                         title={
                           booking
-                            ? `${booking.name} · ${booking.mobile} · ${booking.status}`
+                            ? booking.source === 'reclub'
+                              ? `Reclub booking · ${rangeLabel(booking.startHour, booking.endHour)}`
+                              : `${booking.sport ? `${booking.sport} · ` : ''}${booking.name} · ${booking.mobile} · ${booking.status === 'confirmed' ? 'Confirmed' : 'Reserved'}`
                             : block?.reason || (block ? 'Blocked' : undefined)
                         }
                       >
-                        {label}
+                        {booking?.source === 'reclub' ? <ReclubLogo className="h-7 w-7" /> : label}
                       </button>
                     )
                   })}
@@ -288,19 +695,22 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
           it, or tap a blocked slot (dark) to unblock it.
         </p>
       </div>
+      </>
+      )}
 
-      {selection && !assignFormOpen && (
+      {activeSection === 'bookings' && selection && !assignFormOpen && (
         <SelectionActionBar
           courtName={bookingCourts.find((c) => c.id === selection.courtId)?.name ?? ''}
           startHour={selection.startHour}
           endHour={selection.endHour}
           onBlock={blockSelection}
           onAssign={() => setAssignFormOpen(true)}
+          onAssignReclub={assignReclubSelection}
           onClear={() => setSelection(null)}
         />
       )}
 
-      {selection && assignFormOpen && (
+      {activeSection === 'bookings' && selection && assignFormOpen && (
         <AssignForm
           dayIso={activeDayData.iso}
           dayLabel={formatFullDate(activeDayData.date)}
@@ -320,6 +730,8 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
       {viewingBlockId && (
         <BlockModal blockId={viewingBlockId} onClose={() => setViewingBlockId(null)} />
       )}
+        </main>
+      </div>
     </Container>
   )
 }
@@ -344,6 +756,7 @@ function SelectionActionBar({
   endHour,
   onBlock,
   onAssign,
+  onAssignReclub,
   onClear,
 }: {
   courtName: string
@@ -351,6 +764,7 @@ function SelectionActionBar({
   endHour: number
   onBlock: (reason: string) => void
   onAssign: () => void
+  onAssignReclub: () => void
   onClear: () => void
 }) {
   const [reason, setReason] = useState('')
@@ -359,7 +773,7 @@ function SelectionActionBar({
     <div className="flex flex-col gap-3 rounded-card border border-ink/10 bg-sand-dim p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
       <div>
         <p className="text-sm font-semibold text-ink">
-          {courtName.split('—')[0].trim()} · {rangeLabel(startHour, endHour)}
+          {courtName} · {rangeLabel(startHour, endHour)}
         </p>
         <p className="text-xs text-ink/55">{endHour - startHour} hour(s) selected</p>
       </div>
@@ -375,6 +789,14 @@ function SelectionActionBar({
         </Button>
         <Button variant="primary" className="!py-2 !text-xs" onClick={onAssign}>
           Assign a booking
+        </Button>
+        <Button
+          variant="secondary"
+          className="!border-ink/20 !bg-white !py-2 !text-xs !text-ink hover:!bg-sand"
+          onClick={onAssignReclub}
+        >
+          <ReclubLogo className="h-5 w-5" />
+          Assign Reclub
         </Button>
         <button type="button" onClick={onClear} className="text-xs font-medium text-ink/50 hover:text-ink">
           Clear
@@ -437,7 +859,7 @@ function AssignForm({
     <div className="mx-auto w-full max-w-md rounded-card border border-ink/10 bg-sand p-6 shadow-xl shadow-ink/5 sm:p-8">
       <h3 className="font-display text-lg font-semibold text-ink">Assign a booking</h3>
       <p className="mt-1 text-sm text-ink/60">
-        {court?.name.split('—')[0].trim()} · {dayLabel} · {rangeLabel(selection.startHour, selection.endHour)}
+        {court?.name} · {dayLabel} · {rangeLabel(selection.startHour, selection.endHour)}
       </p>
 
       <div className="mt-5 flex flex-col gap-4">
@@ -495,7 +917,6 @@ function BookingEditModal({ booking, onClose }: { booking: StoredBooking; onClos
   const [courtId, setCourtId] = useState(booking.courtId)
   const [startHour, setStartHour] = useState(booking.startHour)
   const [endHour, setEndHour] = useState(booking.endHour)
-  const [status, setStatus] = useState(booking.status)
   const [error, setError] = useState('')
 
   function saveReschedule() {
@@ -518,7 +939,6 @@ function BookingEditModal({ booking, onClose }: { booking: StoredBooking; onClos
       startHour,
       endHour,
       rate: court?.rate ?? booking.rate,
-      status,
     })
     onClose()
   }
@@ -537,16 +957,24 @@ function BookingEditModal({ booking, onClose }: { booking: StoredBooking; onClos
         className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-card border border-ink/10 bg-sand p-5 shadow-xl shadow-ink/10 sm:p-8"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="font-display text-lg font-semibold text-ink">
-          {booking.name} <span className="text-sm font-normal text-ink/50">· {booking.reference}</span>
-        </h3>
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="font-display text-lg font-semibold text-ink">
+            {booking.name} <span className="text-sm font-normal text-ink/50">· {booking.reference}</span>
+          </h3>
+          <ModalCloseButton onClose={onClose} />
+        </div>
         <p className="mt-1 text-sm text-ink/60">
           {booking.mobile}
           {booking.email ? ` · ${booking.email}` : ''}
           {booking.notes ? ` · ${booking.notes}` : ''}
         </p>
         <p className="mt-1 text-xs uppercase tracking-wide text-ink/40">
-          {booking.source === 'admin' ? 'Added by staff' : 'Booked by customer'}
+          {booking.source === 'admin'
+            ? 'Added by staff'
+            : booking.source === 'reclub'
+              ? 'Assigned from Reclub'
+              : 'Booked by customer'}
+          {booking.sport ? ` · ${booking.sport}` : ''}
         </p>
 
         <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -558,20 +986,15 @@ function BookingEditModal({ booking, onClose }: { booking: StoredBooking; onClos
             >
               {bookingCourts.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name.split('—')[0].trim()}
+                  {c.name}
                 </option>
               ))}
             </select>
           </Field>
           <Field label="Status">
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value as StoredBooking['status'])}
-              className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
-            >
-              <option value="pending">Pending</option>
-              <option value="confirmed">Confirmed</option>
-            </select>
+            <p className="rounded-xl border border-ink/10 bg-sand-dim px-3 py-2.5 text-sm font-semibold text-ink">
+              {booking.status === 'confirmed' ? 'Confirmed' : 'Reserved'}
+            </p>
           </Field>
           <Field label="Date">
             <select
@@ -652,7 +1075,11 @@ function BlockModal({ blockId, onClose }: { blockId: string; onClose: () => void
         className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-sm overflow-y-auto rounded-card border border-ink/10 bg-sand p-5 text-center shadow-xl shadow-ink/10 sm:p-8"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="font-display text-lg font-semibold text-ink">Blocked time</h3>
+        <div className="grid grid-cols-[2rem_minmax(0,1fr)_2rem] items-center gap-2">
+          <span aria-hidden="true" />
+          <h3 className="font-display text-lg font-semibold text-ink">Blocked time</h3>
+          <ModalCloseButton onClose={onClose} />
+        </div>
         <p className="mt-1 text-sm text-ink/60">This slot is closed off from customer bookings.</p>
         <div className="mt-6 flex gap-3">
           <Button variant="secondary" className="!flex-1 !text-ink !border-ink/20" onClick={onClose}>
@@ -664,6 +1091,20 @@ function BlockModal({ blockId, onClose }: { blockId: string; onClose: () => void
         </div>
       </div>
     </div>
+  )
+}
+
+function ModalCloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Close modal"
+      title="Close"
+      onClick={onClose}
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-ink/10 bg-white text-xl leading-none text-ink/60 transition-colors hover:bg-sand-dim hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-court"
+    >
+      ×
+    </button>
   )
 }
 

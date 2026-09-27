@@ -14,8 +14,11 @@ import { useSyncExternalStore } from 'react'
 export interface StoredBooking {
   id: string
   reference: string
+  /** Customer-provided GCash/Maya transaction reference for payment review. */
+  paymentReference?: string
   courtId: string
   courtName: string
+  sport?: string
   dayIso: string
   startHour: number
   endHour: number // exclusive
@@ -25,8 +28,8 @@ export interface StoredBooking {
   email?: string
   notes?: string
   /** 'customer' = booked through the public site. 'admin' = added manually by staff. */
-  source: 'customer' | 'admin'
-  status: 'confirmed' | 'pending'
+  source: 'customer' | 'admin' | 'reclub'
+  status: 'confirmed' | 'reserved' | 'pending' | 'rejected'
   createdAt: string
 }
 
@@ -59,6 +62,10 @@ function write<T>(key: string, value: T[]) {
   } catch {
     // localStorage unavailable (private mode, quota, etc.) — changes just won't persist
   }
+  notifyBookingStoreChanged()
+}
+
+export function notifyBookingStoreChanged() {
   window.dispatchEvent(new Event(CHANGE_EVENT))
 }
 
@@ -103,6 +110,20 @@ export function updateBooking(id: string, patch: Partial<StoredBooking>) {
   )
 }
 
+export function updateCustomerBookingsByReference(
+  reference: string,
+  status: StoredBooking['status'],
+) {
+  write(
+    BOOKINGS_KEY,
+    getBookings().map((booking) =>
+      booking.reference === reference && booking.source === 'customer'
+        ? { ...booking, status }
+        : booking,
+    ),
+  )
+}
+
 export function removeBooking(id: string) {
   write(BOOKINGS_KEY, getBookings().filter((b) => b.id !== id))
 }
@@ -110,7 +131,11 @@ export function removeBooking(id: string) {
 /** Booking that occupies this exact court/day/hour, if any. */
 export function getBookingAt(dayIso: string, courtId: string, hour: number) {
   return getBookings().find(
-    (b) => b.dayIso === dayIso && b.courtId === courtId && overlaps(b.startHour, b.endHour, hour, hour + 1),
+    (b) =>
+      b.status !== 'rejected' &&
+      b.dayIso === dayIso &&
+      b.courtId === courtId &&
+      overlaps(b.startHour, b.endHour, hour, hour + 1),
   )
 }
 
@@ -125,6 +150,7 @@ export function findOverlappingBooking(
   return getBookings().find(
     (b) =>
       b.id !== excludeId &&
+      b.status !== 'rejected' &&
       b.dayIso === dayIso &&
       b.courtId === courtId &&
       overlaps(b.startHour, b.endHour, startHour, endHour),
@@ -195,7 +221,7 @@ window.addEventListener('storage', () => {
   snapshotVersion++
 })
 
-/** Re-renders the calling component whenever bookings or blocked slots change anywhere in the app. */
+/** Re-renders the calling component whenever booking data or court settings change. */
 export function useBookingStoreVersion() {
   return useSyncExternalStore(
     subscribe,

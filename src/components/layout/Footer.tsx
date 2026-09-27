@@ -1,7 +1,10 @@
-import { Link, useLocation } from 'react-router-dom'
+import { useEffect, useState, type FormEvent } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { navLinks } from '../../data/nav'
+import { tryUnlockAdmin } from '../../data/adminAuth'
 import Logo from '../ui/Logo'
 import Container from '../ui/Container'
+import Button from '../ui/Button'
 
 const social = [
   { label: 'Facebook', href: 'https://www.facebook.com/profile.php?id=61594366808151#' },
@@ -10,6 +13,42 @@ const social = [
 
 export default function Footer() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const [loginOpen, setLoginOpen] = useState(false)
+  const [passcode, setPasscode] = useState('')
+  const [loginError, setLoginError] = useState(false)
+
+  useEffect(() => {
+    if (!loginOpen) return
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setLoginOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [loginOpen])
+
+  function openLogin() {
+    setPasscode('')
+    setLoginError(false)
+    setLoginOpen(true)
+  }
+
+  function submitLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (tryUnlockAdmin(passcode)) {
+      setLoginOpen(false)
+      navigate('/admin')
+    } else {
+      setLoginError(true)
+    }
+  }
 
   return (
     <footer className="bg-ink pt-16 pb-8 text-sand sm:pt-20">
@@ -43,6 +82,17 @@ export default function Footer() {
                   )}
                 </li>
               ))}
+              {location.pathname !== '/admin' && (
+                <li>
+                  <button
+                    type="button"
+                    onClick={openLogin}
+                    className="text-sm text-sand/65 transition-colors hover:text-citrus"
+                  >
+                    Login
+                  </button>
+                </li>
+              )}
             </ul>
           </div>
 
@@ -84,6 +134,64 @@ export default function Footer() {
           <p>San Fernando City, La Union</p>
         </div>
       </Container>
+
+      {loginOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-ink/60 p-4"
+          onClick={() => setLoginOpen(false)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="staff-login-title"
+            className="w-full max-w-sm rounded-card border border-ink/10 bg-sand p-6 shadow-2xl sm:p-8"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 id="staff-login-title" className="font-display text-lg font-semibold text-ink">
+                  Staff login
+                </h2>
+                <p className="mt-1 text-sm text-ink/60">Enter the staff passcode to manage bookings.</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close login"
+                onClick={() => setLoginOpen(false)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xl leading-none text-ink/60 transition-colors hover:bg-ink/5 hover:text-ink"
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={submitLogin}>
+              <label htmlFor="staff-login-passcode" className="mt-5 block text-sm font-medium text-ink/75">
+                Passcode
+              </label>
+              <input
+                id="staff-login-passcode"
+                type="password"
+                autoFocus
+                autoComplete="current-password"
+                value={passcode}
+                onChange={(event) => {
+                  setPasscode(event.target.value)
+                  setLoginError(false)
+                }}
+                className="mt-2 w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+              />
+              {loginError && (
+                <p role="alert" className="mt-2 text-xs font-medium text-tide">
+                  Wrong passcode. Try again.
+                </p>
+              )}
+              <Button type="submit" variant="primary" className="mt-5 w-full">
+                Login
+              </Button>
+            </form>
+          </section>
+        </div>
+      )}
     </footer>
   )
 }

@@ -66,7 +66,8 @@ export default function MyBookingsPage() {
                       className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6"
                     >
                       <div>
-                        <p className="font-semibold text-ink">{booking.courtName.split('—')[0].trim()}</p>
+                        <p className="font-semibold text-ink">{booking.courtName}</p>
+                        {booking.sport && <p className="mt-1 text-sm font-medium text-court">{booking.sport}</p>}
                         <p className="mt-1 text-sm text-ink/60">
                           {formatFullDate(new Date(`${booking.dayIso}T00:00:00`))} ·{' '}
                           {formatHour(booking.startHour)}–{formatHour(booking.endHour)}
@@ -77,10 +78,16 @@ export default function MyBookingsPage() {
                           className={`rounded-full px-3 py-1 text-xs font-semibold ${
                             booking.status === 'confirmed'
                               ? 'bg-court/10 text-court'
-                              : 'bg-citrus/15 text-ink'
+                              : booking.status === 'rejected'
+                                ? 'bg-tide/10 text-tide'
+                                : 'bg-citrus/15 text-ink'
                           }`}
                         >
-                          {booking.status === 'confirmed' ? 'Confirmed' : 'Pending verification'}
+                          {booking.status === 'confirmed'
+                            ? 'Confirmed'
+                            : booking.status === 'rejected'
+                              ? 'Rejected'
+                              : 'Reserved'}
                         </span>
                         <span className="font-display text-base font-semibold text-ink">
                           ₱{((booking.endHour - booking.startHour) * booking.rate).toLocaleString()}

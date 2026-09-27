@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Container from '../ui/Container'
 import SectionHeading from '../ui/SectionHeading'
 import Button from '../ui/Button'
+import SportIllustration from '../ui/SportIllustration'
+import ReclubLogo from '../ui/ReclubLogo'
 import {
   bookingCourts,
   hourSlots,
@@ -10,8 +12,12 @@ import {
   isSlotBooked,
   isSlotPast,
   type DayOption,
+  type BookingCourt,
+  type HourSlot,
 } from '../../data/booking'
-import { addBooking, genReference, useBookingStoreVersion } from '../../data/store'
+import { addBooking, genReference, getBookingAt, getBlockAt, useBookingStoreVersion } from '../../data/store'
+import { getPaymentQrCode } from '../../data/paymentQr'
+import { sports } from '../../data/sports'
 import qrPlaceholder from '../../assets/payment-qr-placeholder.png'
 
 interface Selection {
@@ -25,10 +31,18 @@ interface Selection {
 }
 
 type Step = 'calendar' | 'details' | 'payment' | 'confirmed'
+type BookingModalView = 'category' | 'schedule'
+
+const sportBookingMarkers: Record<string, string> = {
+  PB: '🏓',
+  BM: '🏸',
+  TK: '🥋',
+}
 
 export default function Booking() {
   // Re-render whenever bookings/blocks change anywhere (e.g. staff blocks a slot in Admin).
   useBookingStoreVersion()
+  const configuredPaymentQr = getPaymentQrCode()
   const [weekOffset, setWeekOffset] = useState(0)
   const days = useMemo(() => getDayOptions(7, weekOffset * 7), [weekOffset])
   const [activeDay, setActiveDay] = useState<DayOption>(days[0])
@@ -36,13 +50,36 @@ export default function Booking() {
   const activeDayData = days.find((d) => d.iso === activeDay.iso) ?? days[0]
 
   const [selections, setSelections] = useState<Selection[]>([])
+  const [selectedSport, setSelectedSport] = useState<string | null>(null)
+  const [bookingModalOpen, setBookingModalOpen] = useState(true)
+  const [bookingModalView, setBookingModalView] = useState<BookingModalView>('category')
   const [step, setStep] = useState<Step>('calendar')
+  const bookingDialog = useRef<HTMLDialogElement>(null)
   const [form, setForm] = useState({ name: '', mobile: '', email: '' })
-  const [proofFile, setProofFile] = useState<File | null>(null)
+  const [paymentTransactionReference, setPaymentTransactionReference] = useState('')
   const [reference, setReference] = useState('')
+
+  useEffect(() => {
+    const dialog = bookingDialog.current
+    if (!dialog) return
+    if (bookingModalOpen && !dialog.open) dialog.showModal()
+    if (!bookingModalOpen && dialog.open) dialog.close()
+  }, [bookingModalOpen])
 
   function switchDay(d: DayOption) {
     setActiveDay(d)
+  }
+
+  function chooseSport(sport: string) {
+    setSelectedSport(sport)
+    setSelections([])
+    setBookingModalView('schedule')
+  }
+
+  function changeSport() {
+    setSelections([])
+    setSelectedSport(null)
+    setBookingModalView('category')
   }
 
   function toggleHour(court: (typeof bookingCourts)[number], hour: number) {
@@ -100,11 +137,17 @@ export default function Booking() {
   }
 
   function removeSelection(target: Selection) {
-    setSelections((prev) => prev.filter((s) => s !== target))
+    setSelections((prev) =>
+      prev.filter((s) => s.courtId !== target.courtId || s.dayIso !== target.dayIso),
+    )
   }
 
-  const total = selections.reduce((sum, s) => sum + (s.endHour - s.startHour) * s.rate, 0)
-  const totalHours = selections.reduce((sum, s) => sum + (s.endHour - s.startHour), 0)
+  const currentSelections = selections.map((selection) => {
+    const court = bookingCourts.find((item) => item.id === selection.courtId)
+    return court ? { ...selection, courtName: court.name, rate: court.rate } : selection
+  })
+  const total = currentSelections.reduce((sum, s) => sum + (s.endHour - s.startHour) * s.rate, 0)
+  const totalHours = currentSelections.reduce((sum, s) => sum + (s.endHour - s.startHour), 0)
 
   function goToDetails() {
     if (selections.length === 0) return
@@ -119,11 +162,16 @@ export default function Booking() {
 
   function confirmBooking() {
     const ref = reference || genReference()
-    selections.forEach((s) => {
+    const transactionReference = paymentTransactionReference.trim()
+    if (!selectedSport || !transactionReference) return
+
+    currentSelections.forEach((s, index) => {
       addBooking({
         reference: ref,
+        paymentReference: index === 0 ? transactionReference : undefined,
         courtId: s.courtId,
         courtName: s.courtName,
+        sport: selectedSport,
         dayIso: s.dayIso,
         startHour: s.startHour,
         endHour: s.endHour,
@@ -132,7 +180,7 @@ export default function Booking() {
         mobile: form.mobile,
         email: form.email,
         source: 'customer',
-        status: 'pending', // staff verifies payment before marking it confirmed in Admin
+        status: 'reserved',
       })
     })
     setStep('confirmed')
@@ -140,10 +188,17 @@ export default function Booking() {
 
   function startOver() {
     setSelections([])
+    setSelectedSport(null)
     setForm({ name: '', mobile: '', email: '' })
-    setProofFile(null)
+    setPaymentTransactionReference('')
     setReference('')
     setStep('calendar')
+    setBookingModalView('category')
+    setBookingModalOpen(true)
+  }
+
+  function closeBookingModal() {
+    setBookingModalOpen(false)
   }
 
   return (
@@ -154,8 +209,90 @@ export default function Booking() {
           lede="Pick a date and time, review your total, then pay by GCash or Maya QR — no account needed."
         />
 
-        {step === 'calendar' && (
-          <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start xl:gap-6">
+        {!bookingModalOpen && (
+          <Button className="self-start" onClick={() => setBookingModalOpen(true)}>
+            Continue booking
+          </Button>
+        )}
+
+        <dialog
+          ref={bookingDialog}
+          aria-labelledby={
+            bookingModalView === 'category'
+              ? 'booking-category-title'
+              : step === 'details'
+                ? 'booking-details-title'
+                : step === 'payment'
+                  ? 'booking-payment-title'
+                  : step === 'confirmed'
+                    ? 'booking-confirmed-title'
+                    : 'booking-schedule-title'
+          }
+          onCancel={(event) => {
+            event.preventDefault()
+            closeBookingModal()
+          }}
+          className={`m-auto max-h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] overflow-y-auto rounded-card border border-ink/10 bg-sand p-0 shadow-2xl backdrop:bg-ink/70 backdrop:backdrop-blur-sm ${
+            bookingModalView === 'category'
+              ? 'max-w-2xl'
+              : step === 'calendar'
+                ? 'max-w-[90rem]'
+                : step === 'payment'
+                  ? 'max-w-3xl'
+                  : 'max-w-lg'
+          }`}
+        >
+          {bookingModalView === 'category' && (
+            <div className="p-4 sm:p-6">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-court">Choose a category</p>
+                  <h2 id="booking-category-title" className="mt-2 font-display text-xl font-semibold text-ink sm:text-2xl">
+                    What would you like to book?
+                  </h2>
+                </div>
+                <ModalCloseButton onClose={closeBookingModal} />
+              </div>
+              <p className="mt-2 text-sm text-ink/60">Select a sport to continue to the date and time calendar.</p>
+
+              <div className="mt-5 grid gap-2.5 sm:grid-cols-3">
+                {sports.map((sport) => (
+                  <button
+                    key={sport.id}
+                    type="button"
+                    onClick={() => chooseSport(sport.name)}
+                    className="group flex min-h-36 flex-col items-start justify-between rounded-2xl border border-ink/10 bg-white p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-court/45 hover:shadow-lg hover:shadow-ink/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-court"
+                  >
+                    <span>
+                      <SportIllustration sportId={sport.id} className="mb-4 h-24 w-full rounded-xl" />
+                      <span className="font-display text-lg font-semibold text-ink">{sport.name}</span>
+                    </span>
+                    <span className="mt-5 text-sm font-semibold text-ink transition-colors group-hover:text-court">
+                      Choose {sport.name} <span aria-hidden="true">→</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {bookingModalView === 'schedule' && step === 'calendar' && selectedSport && (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink/10 px-5 py-4 sm:px-7">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-court">{selectedSport}</p>
+                  <h2 id="booking-schedule-title" className="mt-1 font-display text-xl font-semibold text-ink sm:text-2xl">
+                    Choose a date and time
+                  </h2>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={changeSport} className="text-sm font-semibold text-court hover:text-ink">
+                    Change category
+                  </button>
+                  <ModalCloseButton onClose={closeBookingModal} />
+                </div>
+              </div>
+              <div className="grid min-w-0 gap-5 px-3 py-4 sm:px-6 sm:py-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
             <div className="overflow-hidden rounded-card border border-ink/10 bg-sand shadow-xl shadow-ink/5">
               {/* Date strip */}
               <div className="bg-ink px-4 py-5 sm:px-6">
@@ -213,68 +350,82 @@ export default function Booking() {
                   Legend
                 </span>
                 <LegendSwatch className="border border-ink/20 bg-sand" label="Available" />
-                <LegendSwatch className="bg-tide" label="Booked" />
+                <LegendSwatch className="bg-citrus" label="Reserved" />
+                <LegendSwatch className="bg-tide" label="Booked (sport emoji)" />
+                <LegendSwatch className="bg-ink/50" label="Blocked 🚫" />
                 <LegendSwatch className="bg-citrus" label="Selected" />
                 <LegendSwatch className="border border-ink/10 bg-sand-dim" label="Past" />
               </div>
 
               {/* Grid */}
-              <p className="px-4 pt-3 text-xs text-ink/50 sm:px-6">Scroll horizontally to see all time slots â†’</p>
-              <div className="overflow-x-auto overscroll-x-contain">
-                <div className="min-w-[720px] px-4 py-4 sm:px-6">
-                  <div
-                    className="grid gap-1.5"
-                    style={{ gridTemplateColumns: `120px repeat(${hourSlots.length}, 64px)` }}
-                  >
-                    <div />
-                    {hourSlots.map((h) => (
-                      <div key={h.hour} className="pb-2 text-center text-[0.7rem] font-medium text-ink/60">
-                        {h.label}
-                      </div>
-                    ))}
-
-                    {bookingCourts.map((court) => {
-                      const selection = selections.find(
-                        (s) => s.courtId === court.id && s.dayIso === activeDayData.iso,
-                      )
-                      return (
-                        <div key={court.id} className="contents">
-                          <div className="flex flex-col justify-center py-2 pr-3">
-                            <p className="text-sm font-semibold text-ink">{court.name}</p>
-                            <p className="text-xs text-ink/55">₱{court.rate}/hr</p>
-                          </div>
-                          {hourSlots.map((h) => {
-                            const booked = isSlotBooked(activeDayData.iso, court.id, h.hour)
-                            const past = isSlotPast(activeDayData.iso, h.hour)
-                            const isSelected =
-                              !!selection && h.hour >= selection.startHour && h.hour < selection.endHour
-
-                            let cls =
-                              'flex h-11 items-center justify-center rounded-lg border text-[0.65rem] font-semibold transition-all sm:h-12 '
-                            if (past) cls += 'cursor-not-allowed border-ink/5 bg-sand-dim text-ink/25'
-                            else if (booked) cls += 'cursor-not-allowed border-tide bg-tide text-sand'
-                            else if (isSelected) cls += 'border-citrus bg-citrus text-ink shadow-sm shadow-citrus/25'
-                            else cls += 'border-ink/10 bg-white text-ink/35 hover:border-court/45 hover:bg-court/5 hover:text-ink'
-
-                            return (
-                              <button
-                                key={h.hour}
-                                type="button"
-                                disabled={booked || past}
-                                onClick={() => toggleHour(court, h.hour)}
-                                className={cls}
-                                aria-label={`${court.name}, ${h.label}, ${
-                                  booked ? 'booked' : past ? 'past' : isSelected ? 'selected' : 'available'
-                                }`}
-                              >
-                                {booked ? '—' : isSelected ? '✓' : ''}
-                              </button>
-                            )
-                          })}
+              <p className="px-4 pt-3 text-xs text-ink/50 sm:px-6">
+                Hours run from 8:00 AM to 12:00 AM. Tap available times to select a continuous block.
+              </p>
+              <div className="px-3 py-4 sm:px-4 md:hidden">
+                <div className="grid gap-3">
+                  {bookingCourts.map((court) => {
+                    const selection = selections.find(
+                      (s) => s.courtId === court.id && s.dayIso === activeDayData.iso,
+                    )
+                    return (
+                      <section key={court.id} className="rounded-xl border border-ink/10 bg-white/70 p-2.5">
+                        <div className="mb-2 flex items-baseline justify-between gap-2 px-0.5">
+                          <p className="min-w-0 truncate text-xs font-semibold text-ink">{court.name}</p>
+                          <p className="shrink-0 text-[0.65rem] text-ink/55">₱{court.rate}/hr</p>
                         </div>
-                      )
-                    })}
-                  </div>
+                        <div className="grid grid-cols-8 gap-1">
+                          {hourSlots.map((hour) => (
+                            <ScheduleSlotButton
+                              key={hour.hour}
+                              court={court}
+                              hour={hour}
+                              dayIso={activeDayData.iso}
+                              selection={selection}
+                              compact
+                              onToggle={toggleHour}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    )
+                  })}
+                </div>
+              </div>
+              <div className="hidden min-w-0 px-2 py-4 md:block sm:px-4">
+                <div
+                  className="grid min-w-0 gap-1"
+                  style={{ gridTemplateColumns: `minmax(82px,1.35fr) repeat(${hourSlots.length}, minmax(0,1fr))` }}
+                >
+                  <div />
+                  {hourSlots.map((hour) => (
+                    <div key={hour.hour} className="pb-2 text-center font-medium text-ink/60">
+                      <TimeRangeLabel hour={hour.hour} compact />
+                    </div>
+                  ))}
+
+                  {bookingCourts.map((court) => {
+                    const selection = selections.find(
+                      (s) => s.courtId === court.id && s.dayIso === activeDayData.iso,
+                    )
+                    return (
+                      <div key={court.id} className="contents">
+                        <div className="flex min-w-0 flex-col justify-center py-2 pr-1.5">
+                          <p className="truncate text-xs font-semibold text-ink">{court.name}</p>
+                          <p className="text-[0.65rem] text-ink/55">₱{court.rate}/hr</p>
+                        </div>
+                        {hourSlots.map((hour) => (
+                          <ScheduleSlotButton
+                            key={hour.hour}
+                            court={court}
+                            hour={hour}
+                            dayIso={activeDayData.iso}
+                            selection={selection}
+                            onToggle={toggleHour}
+                          />
+                        ))}
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
 
@@ -285,25 +436,30 @@ export default function Booking() {
             </div>
 
             <BookingSummaryPanel
-              selections={selections}
+              selections={currentSelections}
               total={total}
               totalHours={totalHours}
               onRemove={removeSelection}
               onProceed={goToDetails}
             />
           </div>
-        )}
-
+            </>
+          )}
         {step === 'details' && (
-          <div className="mx-auto w-full max-w-lg rounded-card border border-ink/10 bg-sand p-6 shadow-xl shadow-ink/5 sm:p-9">
+          <div className="relative mx-auto w-full max-w-lg rounded-card border border-ink/10 bg-sand p-6 shadow-xl shadow-ink/5 sm:p-9">
+            <ModalCloseButton className="absolute right-4 top-4" onClose={closeBookingModal} />
             <button
               type="button"
-              onClick={() => setStep('calendar')}
+              onClick={() => {
+                setStep('calendar')
+                setBookingModalView('schedule')
+                setBookingModalOpen(true)
+              }}
               className="mb-5 text-sm font-medium text-ink/60 hover:text-ink"
             >
               ← Back to schedule
             </button>
-            <h3 className="font-display text-lg font-semibold text-ink">Your details</h3>
+            <h3 id="booking-details-title" className="font-display text-lg font-semibold text-ink">Your details</h3>
             <p className="mt-1 text-sm text-ink/60">
               So we can confirm your booking and reach you if anything changes.
             </p>
@@ -350,15 +506,16 @@ export default function Booking() {
         )}
 
         {step === 'payment' && (
-          <div className="mx-auto grid w-full max-w-3xl gap-7 rounded-card border border-ink/10 bg-sand p-5 shadow-xl shadow-ink/5 sm:p-9 md:grid-cols-[1fr_1.1fr]">
+          <div className="relative mx-auto grid w-full max-w-3xl gap-7 rounded-card border border-ink/10 bg-sand p-5 shadow-xl shadow-ink/5 sm:p-9 md:grid-cols-[1fr_1.1fr]">
+            <ModalCloseButton className="absolute right-4 top-4 z-10" onClose={closeBookingModal} />
             <div className="flex flex-col items-center gap-3 text-center">
               <div className="w-full max-w-[220px] overflow-hidden rounded-2xl border-2 border-dashed border-citrus/50 bg-white p-2">
-                <img src={qrPlaceholder} alt="Scan to pay via GCash or Maya" className="w-full rounded-xl" />
+                <img src={configuredPaymentQr ?? qrPlaceholder} alt="Scan to pay via GCash or Maya" className="w-full rounded-xl" />
               </div>
               <p className="text-xs text-ink/50">
-                Placeholder QR — swap in your real GCash/Maya "Scan to Pay" code at
-                <br />
-                <code className="text-[0.65rem]">src/assets/payment-qr-placeholder.png</code>
+                {configuredPaymentQr
+                  ? 'Scan the uploaded GCash or Maya QR code to pay.'
+                  : 'Sample QR shown. Admin can upload the actual code in Courts & pricing.'}
               </p>
             </div>
 
@@ -371,9 +528,9 @@ export default function Booking() {
                 ← Back
               </button>
               <div>
-                <h3 className="font-display text-lg font-semibold text-ink">Scan &amp; pay</h3>
+                <h3 id="booking-payment-title" className="font-display text-lg font-semibold text-ink">Scan &amp; pay</h3>
                 <p className="mt-1 text-sm text-ink/60">
-                  Open GCash or Maya, scan the code, and send the exact amount below.
+                  {selectedSport} booking · Open GCash or Maya, scan the code, and send the exact amount below.
                 </p>
               </div>
 
@@ -384,7 +541,7 @@ export default function Booking() {
                 </p>
               </div>
 
-              <Field label="Booking reference (add this as the payment note)">
+              <Field label="Booking reference (use this as the payment note)">
                 <input
                   readOnly
                   value={reference}
@@ -392,42 +549,53 @@ export default function Booking() {
                 />
               </Field>
 
-              <Field label="Upload screenshot of payment (optional)">
+              <Field label="Payment transaction reference number (required)">
                 <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => setProofFile(e.target.files?.[0] ?? null)}
-                  className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 text-sm text-ink transition-colors duration-200 file:mr-3 file:rounded-full file:border-0 file:bg-citrus file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-ink"
+                  type="text"
+                  required
+                  maxLength={64}
+                  value={paymentTransactionReference}
+                  onChange={(e) => setPaymentTransactionReference(e.target.value)}
+                  placeholder="Enter the GCash or Maya reference number"
+                  className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
                 />
-                {proofFile && <p className="mt-1 text-xs text-ink/50">Attached: {proofFile.name}</p>}
               </Field>
+              <p className="-mt-2 text-xs text-ink/50">Enter the reference number shown by GCash or Maya after you send the payment.</p>
 
-              <Button variant="primary" className="w-full" onClick={confirmBooking}>
-                I've sent payment — confirm booking
+              <Button
+                variant="primary"
+                className="w-full"
+                onClick={confirmBooking}
+                disabled={!paymentTransactionReference.trim()}
+              >
+                Submit booking for review
               </Button>
               <p className="text-center text-xs text-ink/45">
-                We'll verify your payment and text you a confirmation within a few hours.
+                Your slot will be reserved while staff verifies the payment reference.
               </p>
             </div>
           </div>
         )}
 
         {step === 'confirmed' && (
-          <div className="mx-auto flex w-full max-w-lg flex-col items-center gap-4 rounded-card border border-ink/10 bg-sand p-8 text-center shadow-xl shadow-ink/5">
+          <div className="relative mx-auto flex w-full max-w-lg flex-col items-center gap-4 rounded-card border border-ink/10 bg-sand p-8 text-center shadow-xl shadow-ink/5">
+            <ModalCloseButton className="absolute right-4 top-4" onClose={closeBookingModal} />
             <span className="flex h-14 w-14 items-center justify-center rounded-full bg-court/15 text-xl text-court">
               ✓
             </span>
-            <h3 className="font-display text-lg font-semibold text-ink">Booking received!</h3>
+            <h3 id="booking-confirmed-title" className="font-display text-lg font-semibold text-ink">Booking received!</h3>
             <p className="text-sm text-ink/65">
-              Reference <span className="font-semibold text-ink">{reference}</span> — we've noted
-              your slot and will confirm by SMS once your payment is verified.
+              Reference <span className="font-semibold text-ink">{reference}</span> — your slot is
+              reserved while staff reviews your payment reference.
             </p>
 
             <div className="w-full rounded-xl bg-sand-dim p-4 text-left text-sm text-ink/75">
+              <p className="mb-2 font-semibold text-ink">Category: {selectedSport}</p>
+              <p className="mb-2 break-all text-xs">Payment reference: {paymentTransactionReference.trim()}</p>
               {selections.map((s) => (
                 <div key={`${s.courtId}-${s.dayIso}`} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-b border-ink/10 py-1.5 last:border-0">
                   <span className="min-w-0 break-words">
-                    {s.courtName.split('—')[0].trim()} · {s.dayLabel}, {s.startHour % 12 || 12}
+                    {s.courtName} · {s.dayLabel}, {s.startHour % 12 || 12}
                     {s.startHour < 12 ? 'AM' : 'PM'}–{s.endHour % 12 || 12}
                     {s.endHour < 12 || s.endHour === 24 ? 'AM' : 'PM'}
                   </span>
@@ -447,8 +615,114 @@ export default function Booking() {
             </Button>
           </div>
         )}
+        </dialog>
       </Container>
     </section>
+  )
+}
+
+function TimeRangeLabel({ hour, compact = false }: { hour: number; compact?: boolean }) {
+  const startHour = hour % 12 || 12
+  const endHour = (hour + 1) % 12 || 12
+  const startPeriod = hour < 12 ? 'AM' : 'PM'
+  const endPeriod = hour + 1 >= 24 || hour + 1 < 12 ? 'AM' : 'PM'
+  const period = startPeriod === endPeriod ? startPeriod : `${startPeriod}/${endPeriod}`
+
+  return (
+    <span className={`flex flex-col items-center leading-none ${compact ? 'text-[0.5rem]' : 'text-[0.55rem]'}`}>
+      <span>{startHour}-{endHour}</span>
+      <span className="mt-0.5 text-[0.45rem]">{period}</span>
+    </span>
+  )
+}
+
+function ModalCloseButton({ onClose, className = '' }: { onClose: () => void; className?: string }) {
+  return (
+    <button
+      type="button"
+      aria-label="Close modal"
+      title="Close"
+      onClick={onClose}
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-ink/10 bg-white text-xl leading-none text-ink/60 transition-colors hover:bg-sand-dim hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-court ${className}`}
+    >
+      ×
+    </button>
+  )
+}
+
+function ScheduleSlotButton({
+  court,
+  hour,
+  dayIso,
+  selection,
+  compact = false,
+  onToggle,
+}: {
+  court: BookingCourt
+  hour: HourSlot
+  dayIso: string
+  selection?: Selection
+  compact?: boolean
+  onToggle: (court: BookingCourt, hour: number) => void
+}) {
+  const booking = getBookingAt(dayIso, court.id, hour.hour)
+  const block = booking ? undefined : getBlockAt(dayIso, court.id, hour.hour)
+  const unavailable = Boolean(booking || block)
+  const past = isSlotPast(dayIso, hour.hour)
+  const bookedSport = sports.find((sport) => sport.name === booking?.sport)
+  const bookedEmoji = bookedSport ? sportBookingMarkers[bookedSport.id] : '\u{1F512}'
+  const isSelected =
+    !!selection && hour.hour >= selection.startHour && hour.hour < selection.endHour
+
+  let cls = compact
+    ? 'flex min-h-11 min-w-0 flex-col items-center justify-center gap-0.5 rounded-md border px-0.5 text-[0.55rem] font-semibold leading-none transition-all '
+    : 'flex h-9 min-w-0 items-center justify-center rounded-md border text-xs font-semibold transition-all '
+  if (past) cls += 'cursor-not-allowed border-ink/5 bg-sand-dim text-ink/25'
+  else if (booking && booking.status !== 'confirmed') cls += 'cursor-not-allowed border-citrus bg-citrus text-ink'
+  else if (booking) cls += 'cursor-not-allowed border-tide bg-tide text-sand'
+  else if (block) cls += 'cursor-not-allowed border-ink/50 bg-ink/50 text-sand'
+  else if (isSelected) cls += 'border-citrus bg-citrus text-ink shadow-sm shadow-citrus/25'
+  else cls += 'border-ink/10 bg-white text-ink/35 hover:border-court/45 hover:bg-court/5 hover:text-ink'
+
+  const marker = booking
+    ? booking.status === 'confirmed'
+      ? bookedEmoji
+      : 'R'
+    : block
+      ? '\u{1F6AB}'
+      : isSelected
+        ? '\u2713'
+        : ''
+  const status = booking
+    ? booking.source === 'reclub'
+      ? 'Reclub booking'
+      : booking.status === 'confirmed'
+        ? `${booking.sport ?? 'booked'} booked`
+        : 'Reserved'
+    : block
+      ? 'blocked'
+      : past
+        ? 'past'
+        : isSelected
+          ? 'selected'
+          : 'available'
+
+  return (
+    <button
+      type="button"
+      disabled={unavailable || past}
+      onClick={() => onToggle(court, hour.hour)}
+      className={cls}
+      aria-label={`${court.name}, ${hour.label}, ${status}`}
+      title={booking ? (booking.source === 'reclub' ? 'Reclub booking' : booking.status === 'confirmed' ? `${booking.sport ?? 'Booked'}` : 'Reserved') : block ? 'Blocked' : undefined}
+    >
+      {compact && <TimeRangeLabel hour={hour.hour} />}
+      <span aria-hidden="true" className={compact ? 'text-[0.75rem]' : undefined}>
+        {booking?.source === 'reclub'
+          ? <ReclubLogo className={compact ? 'h-3.5 w-3.5' : 'h-5 w-5'} />
+          : marker}
+      </span>
+    </button>
   )
 }
 
@@ -484,7 +758,7 @@ function BookingSummaryPanel({
   onProceed: () => void
 }) {
   return (
-    <aside className="flex flex-col overflow-hidden rounded-card border border-ink/10 bg-sand shadow-xl shadow-ink/5 xl:sticky xl:top-24">
+    <aside className="flex flex-col overflow-hidden rounded-card border border-ink/10 bg-sand shadow-xl shadow-ink/5 lg:sticky lg:top-4">
       <div className="bg-ink px-5 py-4">
         <h3 className="font-display text-base font-semibold text-sand">Booking Summary</h3>
       </div>
@@ -498,7 +772,7 @@ function BookingSummaryPanel({
           {selections.map((s) => (
             <div key={`${s.courtId}-${s.dayIso}`} className="flex items-start justify-between gap-3 px-5 py-3.5">
               <div>
-                <p className="text-sm font-semibold text-ink">{s.courtName.split('—')[0].trim()}</p>
+                <p className="text-sm font-semibold text-ink">{s.courtName}</p>
                 <p className="text-xs text-ink/55">
                   {s.dayLabel} · {s.startHour % 12 || 12}
                   {s.startHour < 12 ? 'AM' : 'PM'}–{s.endHour % 12 || 12}

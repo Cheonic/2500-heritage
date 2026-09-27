@@ -26,6 +26,18 @@ export default function Header() {
     }
   }, [isOpen])
 
+  if (location.pathname === '/admin') {
+    return (
+      <header className="sticky top-0 z-50 border-b border-sand/10 bg-ink">
+        <div className="mx-auto flex w-full max-w-7xl items-center px-5 py-3 sm:px-8">
+          <Link to="/" aria-label="2500 Heritage, home">
+            <Logo />
+          </Link>
+        </div>
+      </header>
+    )
+  }
+
   return (
     <header
       className={`sticky top-0 z-50 border-b transition-all duration-300 ${
