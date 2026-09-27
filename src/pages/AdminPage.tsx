@@ -21,7 +21,7 @@ import {
 } from '../data/store'
 import { isAdminUnlocked, signInAdmin, lockAdmin } from '../data/adminAuth'
 import { getPaymentQrCode, loadPaymentQrCode, savePaymentQrCode } from '../data/paymentQr'
-import { isSupabaseConfigured } from '../data/supabase'
+import { isSupabaseConfigured, requireSupabase } from '../data/supabase'
 
 interface Range {
   courtId: string
@@ -187,6 +187,40 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
   const [paymentQrStatus, setPaymentQrStatus] = useState('')
   const [isPreparingPaymentQr, setIsPreparingPaymentQr] = useState(false)
   const [paymentActionError, setPaymentActionError] = useState('')
+  const [paymentProofUrls, setPaymentProofUrls] = useState<Record<string, string>>({})
+  const [paymentProofErrors, setPaymentProofErrors] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    let active = true
+    const loadPaymentProofs = async () => {
+      const results: { reference: string; url?: string; error?: string }[] = await Promise.all(reservedGroups.map(async ({ reference, bookings }) => {
+        const proof = bookings.find((booking) => booking.paymentScreenshotPath || booking.paymentScreenshotData)
+        if (!proof) return { reference }
+        if (proof.paymentScreenshotData) return { reference, url: proof.paymentScreenshotData }
+        if (!proof.paymentScreenshotPath || !isSupabaseConfigured) return { reference }
+
+        try {
+          const { data, error } = await requireSupabase()
+            .storage.from('payment-proofs')
+            .createSignedUrl(proof.paymentScreenshotPath, 60 * 60)
+          if (error) throw error
+          return { reference, url: data.signedUrl }
+        } catch (error) {
+          return {
+            reference,
+            error: error instanceof Error ? error.message : 'Could not load the payment screenshot.',
+          }
+        }
+      }))
+      if (!active) return
+      setPaymentProofUrls(Object.fromEntries(results.flatMap((result) => result.url ? [[result.reference, result.url]] : [])))
+      setPaymentProofErrors(Object.fromEntries(results.flatMap((result) => result.error ? [[result.reference, result.error]] : [])))
+    }
+    void loadPaymentProofs()
+    return () => {
+      active = false
+    }
+  }, [reservedGroups])
 
   useEffect(() => {
     if (!isSupabaseConfigured) return
@@ -583,7 +617,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="font-display text-base font-semibold text-ink">Payment verification</h2>
-            <p className="mt-1 text-sm text-ink/60">Check the GCash or Maya transaction reference before confirming each reservation.</p>
+            <p className="mt-1 text-sm text-ink/60">Review the uploaded GCash or Maya payment screenshot before confirming each reservation.</p>
           </div>
           <span className="rounded-full bg-citrus/20 px-3 py-1 text-xs font-semibold text-ink">
             {reservedGroups.length} awaiting review
@@ -600,6 +634,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
             {reservedGroups.map(({ reference, bookings }) => {
               const customer = bookings[0]
               const paymentReference = bookings.find((booking) => booking.paymentReference)?.paymentReference
+              const paymentProof = bookings.find((booking) => booking.paymentScreenshotPath || booking.paymentScreenshotData)
               const total = bookings.reduce(
                 (sum, booking) => sum + (booking.endHour - booking.startHour) * booking.rate,
                 0,
@@ -613,9 +648,6 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
                       <p className="mt-1 text-xs font-semibold text-court">
                         {customer.sport ?? 'Sport not specified'} · Reserved
                       </p>
-                      <p className="mt-2 text-xs text-ink/60">
-                        Payment reference: <span className="font-semibold text-ink">{paymentReference || 'Not provided'}</span>
-                      </p>
                     </div>
                     <span className="font-display text-base font-semibold text-ink">₱{total.toLocaleString()}</span>
                   </div>
@@ -626,6 +658,27 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
                         {rangeLabel(booking.startHour, booking.endHour)}
                       </p>
                     ))}
+                  </div>
+                  <div className="mt-4 rounded-xl border border-ink/10 bg-sand-dim p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink/55">Payment screenshot</p>
+                    {paymentProofUrls[reference] ? (
+                      <a href={paymentProofUrls[reference]} target="_blank" rel="noreferrer" aria-label={`Open payment screenshot for ${reference}`}>
+                        <img
+                          src={paymentProofUrls[reference]}
+                          alt={`Payment screenshot for booking ${reference}`}
+                          className="max-h-64 w-full rounded-lg bg-white object-contain"
+                        />
+                        <span className="mt-2 block text-center text-xs font-semibold text-court">Open full size</span>
+                      </a>
+                    ) : paymentProofErrors[reference] ? (
+                      <p role="alert" className="text-sm text-tide">Could not load screenshot: {paymentProofErrors[reference]}</p>
+                    ) : paymentProof ? (
+                      <p className="text-sm text-ink/55">Loading screenshot…</p>
+                    ) : paymentReference ? (
+                      <p className="break-all text-sm text-ink/65">Legacy payment reference: {paymentReference}</p>
+                    ) : (
+                      <p className="text-sm text-ink/55">No payment screenshot is attached to this older booking.</p>
+                    )}
                   </div>
                   <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                     <Button

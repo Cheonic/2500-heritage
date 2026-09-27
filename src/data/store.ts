@@ -7,6 +7,8 @@ export interface StoredBooking {
   id: string
   reference: string
   paymentReference?: string
+  paymentScreenshotPath?: string
+  paymentScreenshotData?: string
   courtId: string
   courtName: string
   sport?: string
@@ -46,6 +48,7 @@ interface DbBooking {
   id: string
   reference: string
   payment_reference: string | null
+  payment_screenshot_path?: string | null
   court_id: string
   court_name: string
   sport: string | null
@@ -112,6 +115,7 @@ function fromDbBooking(row: DbBooking): StoredBooking {
     id: row.id,
     reference: row.reference,
     paymentReference: row.payment_reference ?? undefined,
+    paymentScreenshotPath: row.payment_screenshot_path ?? undefined,
     courtId: row.court_id,
     courtName: row.court_name,
     sport: row.sport ?? undefined,
@@ -145,6 +149,7 @@ function toDbBooking(booking: Omit<StoredBooking, 'id' | 'createdAt'>) {
   return {
     reference: booking.reference,
     payment_reference: booking.paymentReference ?? null,
+    payment_screenshot_path: booking.paymentScreenshotPath ?? null,
     court_id: booking.courtId,
     court_name: booking.courtName,
     sport: booking.sport ?? null,
@@ -216,6 +221,29 @@ export function genReference() {
   return `2500H-${rand}`
 }
 
+function screenshotExtension(file: File) {
+  const extensions: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  }
+  const extension = extensions[file.type]
+  if (!extension) throw new Error('Choose a PNG, JPG, or WEBP screenshot.')
+  if (file.size > 8 * 1024 * 1024) throw new Error('The screenshot must be under 8 MB.')
+  return extension
+}
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => typeof reader.result === 'string'
+      ? resolve(reader.result)
+      : reject(new Error('Could not read the payment screenshot.'))
+    reader.onerror = () => reject(new Error('Could not read the payment screenshot.'))
+    reader.readAsDataURL(file)
+  })
+}
+
 function genId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -280,15 +308,17 @@ export async function createCustomerBooking(input: {
   mobile: string
   email?: string
   sport: string
-  paymentReference: string
+  paymentScreenshot: File
   slots: CustomerBookingSlot[]
 }) {
+  const extension = screenshotExtension(input.paymentScreenshot)
   if (!isSupabaseConfigured) {
     const reference = input.reference || genReference()
+    const paymentScreenshotData = await fileToDataUrl(input.paymentScreenshot)
     for (const slot of input.slots) {
       await addBooking({
         reference,
-        paymentReference: input.slots.indexOf(slot) === 0 ? input.paymentReference : undefined,
+        paymentScreenshotData: input.slots.indexOf(slot) === 0 ? paymentScreenshotData : undefined,
         ...slot,
         sport: input.sport,
         name: input.name,
@@ -301,13 +331,22 @@ export async function createCustomerBooking(input: {
     return reference
   }
 
-  const { data, error } = await requireSupabase().rpc('create_customer_booking', {
+  const client = requireSupabase()
+  const screenshotPath = `${input.reference}/${crypto.randomUUID()}.${extension}`
+  const { error: uploadError } = await client.storage.from('payment-proofs').upload(
+    screenshotPath,
+    input.paymentScreenshot,
+    { contentType: input.paymentScreenshot.type, upsert: false },
+  )
+  if (uploadError) throw uploadError
+
+  const { data, error } = await client.rpc('create_customer_booking', {
     p_reference: input.reference,
     p_name: input.name,
     p_mobile: input.mobile,
     p_email: input.email ?? null,
     p_sport: input.sport,
-    p_payment_reference: input.paymentReference,
+    p_payment_screenshot_path: screenshotPath,
     p_slots: input.slots.map((slot) => ({
       court_id: slot.courtId,
       day_iso: slot.dayIso,
@@ -321,7 +360,7 @@ export async function createCustomerBooking(input: {
   const optimisticRows = input.slots.map<StoredBooking>((slot, index) => ({
     id: `pending-${reference}-${index}`,
     reference,
-    paymentReference: index === 0 ? input.paymentReference : undefined,
+    paymentScreenshotPath: index === 0 ? screenshotPath : undefined,
     ...slot,
     sport: input.sport,
     name: input.name,

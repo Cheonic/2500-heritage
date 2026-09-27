@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import Container from '../ui/Container'
 import SectionHeading from '../ui/SectionHeading'
 import Button from '../ui/Button'
@@ -58,11 +58,23 @@ export default function Booking() {
   const [step, setStep] = useState<Step>('calendar')
   const bookingDialog = useRef<HTMLDialogElement>(null)
   const [form, setForm] = useState({ name: '', mobile: '', email: '' })
-  const [paymentTransactionReference, setPaymentTransactionReference] = useState('')
+  const [paymentScreenshot, setPaymentScreenshot] = useState<File | null>(null)
+  const [paymentScreenshotPreview, setPaymentScreenshotPreview] = useState('')
+  const [paymentScreenshotError, setPaymentScreenshotError] = useState('')
   const [reference, setReference] = useState('')
   const [scheduleLoading, setScheduleLoading] = useState(isSupabaseConfigured)
   const [bookingSaving, setBookingSaving] = useState(false)
   const [bookingError, setBookingError] = useState('')
+
+  useEffect(() => {
+    if (!paymentScreenshot) {
+      setPaymentScreenshotPreview('')
+      return
+    }
+    const previewUrl = URL.createObjectURL(paymentScreenshot)
+    setPaymentScreenshotPreview(previewUrl)
+    return () => URL.revokeObjectURL(previewUrl)
+  }, [paymentScreenshot])
 
   useEffect(() => {
     if (!isSupabaseConfigured || days.length === 0) return
@@ -194,9 +206,28 @@ export default function Booking() {
     setStep('payment')
   }
 
+  function choosePaymentScreenshot(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0]
+    setPaymentScreenshotError('')
+    if (!file) return
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setPaymentScreenshot(null)
+      setPaymentScreenshotError('Choose a PNG, JPG, or WEBP screenshot.')
+      event.currentTarget.value = ''
+      return
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setPaymentScreenshot(null)
+      setPaymentScreenshotError('The screenshot must be under 8 MB.')
+      event.currentTarget.value = ''
+      return
+    }
+    setPaymentScreenshot(file)
+    event.currentTarget.value = ''
+  }
+
   async function confirmBooking() {
-    const transactionReference = paymentTransactionReference.trim()
-    if (!selectedSport || !transactionReference) return
+    if (!selectedSport || !paymentScreenshot) return
     setBookingSaving(true)
     setBookingError('')
     try {
@@ -206,7 +237,7 @@ export default function Booking() {
         mobile: form.mobile,
         email: form.email,
         sport: selectedSport,
-        paymentReference: transactionReference,
+        paymentScreenshot,
         slots: currentSelections,
       })
       setReference(ref)
@@ -222,7 +253,8 @@ export default function Booking() {
     setSelections([])
     setSelectedSport(null)
     setForm({ name: '', mobile: '', email: '' })
-    setPaymentTransactionReference('')
+    setPaymentScreenshot(null)
+    setPaymentScreenshotError('')
     setReference('')
     setStep('calendar')
     setBookingModalView('category')
@@ -585,30 +617,49 @@ export default function Booking() {
                 />
               </Field>
 
-              <Field label="Payment transaction reference number (required)">
+              <Field label="Payment screenshot (required)">
                 <input
-                  type="text"
+                  type="file"
                   required
-                  maxLength={64}
-                  value={paymentTransactionReference}
-                  onChange={(e) => setPaymentTransactionReference(e.target.value)}
-                  placeholder="Enter the GCash or Maya reference number"
-                  className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={choosePaymentScreenshot}
+                  className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink file:mr-3 file:rounded-lg file:border-0 file:bg-citrus/20 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
                 />
               </Field>
-              <p className="-mt-2 text-xs text-ink/50">Enter the reference number shown by GCash or Maya after you send the payment.</p>
+              <p className="-mt-2 text-xs text-ink/50">Upload a clear screenshot of your GCash or Maya payment. PNG, JPG, or WEBP, up to 8 MB.</p>
+              {paymentScreenshotError && <p role="alert" className="-mt-2 text-xs font-medium text-tide">{paymentScreenshotError}</p>}
+              {paymentScreenshotPreview && (
+                <div className="rounded-xl border border-ink/10 bg-white p-2">
+                  <img
+                    src={paymentScreenshotPreview}
+                    alt="Payment screenshot preview"
+                    className="mx-auto max-h-56 rounded-lg object-contain"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentScreenshot(null)
+                      setPaymentScreenshotError('')
+                    }}
+                    className="mt-2 w-full text-center text-xs font-semibold text-tide hover:underline"
+                  >
+                    Remove screenshot
+                  </button>
+                  <p className="mt-2 break-all text-center text-xs text-ink/55">{paymentScreenshot?.name}</p>
+                </div>
+              )}
 
               <Button
                 variant="primary"
                 className="w-full"
                 onClick={confirmBooking}
-                disabled={!paymentTransactionReference.trim() || bookingSaving}
+                disabled={!paymentScreenshot || bookingSaving}
               >
                 {bookingSaving ? 'Submitting…' : 'Submit booking for review'}
               </Button>
               {bookingError && <p role="alert" className="text-center text-xs font-medium text-tide">{bookingError}</p>}
               <p className="text-center text-xs text-ink/45">
-                Your slot will be reserved while staff verifies the payment reference.
+                Your slot will be reserved while staff verifies your payment screenshot.
               </p>
             </div>
           </div>
@@ -623,12 +674,12 @@ export default function Booking() {
             <h3 id="booking-confirmed-title" className="font-display text-lg font-semibold text-ink">Booking received!</h3>
             <p className="text-sm text-ink/65">
               Reference <span className="font-semibold text-ink">{reference}</span> — your slot is
-              reserved while staff reviews your payment reference.
+              reserved while staff reviews your payment screenshot.
             </p>
 
             <div className="w-full rounded-xl bg-sand-dim p-4 text-left text-sm text-ink/75">
               <p className="mb-2 font-semibold text-ink">Category: {selectedSport}</p>
-              <p className="mb-2 break-all text-xs">Payment reference: {paymentTransactionReference.trim()}</p>
+              <p className="mb-2 text-xs">Payment screenshot uploaded for review.</p>
               {selections.map((s) => (
                 <div key={`${s.courtId}-${s.dayIso}`} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-b border-ink/10 py-1.5 last:border-0">
                   <span className="min-w-0 break-words">

@@ -17,6 +17,7 @@ create table if not exists public.bookings (
   id uuid primary key default gen_random_uuid(),
   reference text not null,
   payment_reference text,
+  payment_screenshot_path text,
   court_id text not null references public.courts (id),
   court_name text not null,
   sport text,
@@ -32,6 +33,9 @@ create table if not exists public.bookings (
   status text not null check (status in ('confirmed', 'reserved', 'pending', 'rejected')),
   created_at timestamptz not null default now()
 );
+
+alter table public.bookings
+  add column if not exists payment_screenshot_path text;
 
 create index if not exists bookings_day_court_idx
   on public.bookings (day_iso, court_id, start_hour, end_hour)
@@ -159,13 +163,15 @@ grant execute on function public.get_public_schedule(date, date) to anon, authen
 
 -- Create a customer's complete multi-court booking atomically. Court prices and
 -- names are read from the database so the browser cannot alter the charge.
-create or replace function public.create_customer_booking(
+drop function if exists public.create_customer_booking(text, text, text, text, text, text, jsonb);
+
+create function public.create_customer_booking(
   p_reference text,
   p_name text,
   p_mobile text,
   p_email text,
   p_sport text,
-  p_payment_reference text,
+  p_payment_screenshot_path text,
   p_slots jsonb
 )
 returns text
@@ -182,12 +188,22 @@ declare
 begin
   if length(trim(coalesce(p_name, ''))) = 0
     or length(trim(coalesce(p_mobile, ''))) = 0
-    or length(trim(coalesce(p_payment_reference, ''))) = 0
+    or length(trim(coalesce(p_payment_screenshot_path, ''))) = 0
     or length(trim(coalesce(p_sport, ''))) = 0 then
-    raise exception using errcode = '22023', message = 'Name, mobile, sport, and payment reference are required.';
+    raise exception using errcode = '22023', message = 'Name, mobile, sport, and payment screenshot are required.';
   end if;
   if v_reference !~ '^2500H-[A-Z0-9]{8,16}$' then
     raise exception using errcode = '22023', message = 'Booking reference is invalid.';
+  end if;
+  if p_payment_screenshot_path !~ ('^' || v_reference || '/[0-9a-f-]{36}\.(jpg|png|webp)$') then
+    raise exception using errcode = '22023', message = 'Payment screenshot path is invalid.';
+  end if;
+  if not exists (
+    select 1 from storage.objects
+    where bucket_id = 'payment-proofs'
+      and name = p_payment_screenshot_path
+  ) then
+    raise exception using errcode = '22023', message = 'Upload the payment screenshot before submitting the booking.';
   end if;
   if exists (select 1 from public.bookings where reference = v_reference) then
     raise exception using errcode = '23505', message = 'This booking reference is already in use. Try submitting again.';
@@ -253,12 +269,13 @@ begin
     end if;
 
     insert into public.bookings (
-      reference, payment_reference, court_id, court_name, sport,
+      reference, payment_reference, payment_screenshot_path, court_id, court_name, sport,
       day_iso, start_hour, end_hour, rate, name, mobile, email,
       source, status
     ) values (
       v_reference,
-      case when v_count = 1 then trim(p_payment_reference) else null end,
+      null,
+      case when v_count = 1 then p_payment_screenshot_path else null end,
       v_court.id,
       v_court.name,
       trim(p_sport),
@@ -344,3 +361,34 @@ create policy "Admins can update payment QR" on storage.objects
 drop policy if exists "Admins can delete payment QR" on storage.objects;
 create policy "Admins can delete payment QR" on storage.objects
   for delete to authenticated using (bucket_id = 'payment-qr' and public.is_admin());
+
+-- Payment proofs are private: customers may upload a proof under their booking
+-- reference, and only authenticated admins may view it and create signed URLs.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'payment-proofs',
+  'payment-proofs',
+  false,
+  8388608,
+  array['image/jpeg', 'image/png', 'image/webp']::text[]
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "Customers can upload payment screenshots" on storage.objects;
+create policy "Customers can upload payment screenshots" on storage.objects
+  for insert to anon, authenticated with check (
+    bucket_id = 'payment-proofs'
+    and (storage.foldername(name))[1] ~ '^2500H-[A-Z0-9]{8,16}$'
+    and lower(storage.extension(name)) in ('jpg', 'jpeg', 'png', 'webp')
+  );
+
+drop policy if exists "Admins can view payment screenshots" on storage.objects;
+create policy "Admins can view payment screenshots" on storage.objects
+  for select to authenticated using (
+    bucket_id = 'payment-proofs' and public.is_admin()
+  );
+
+notify pgrst, 'reload schema';
