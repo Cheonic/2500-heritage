@@ -1,8 +1,8 @@
-import { useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 import Container from '../components/ui/Container'
 import Button from '../components/ui/Button'
 import ReclubLogo from '../components/ui/ReclubLogo'
-import { bookingCourts, saveBookingCourts, hourSlots, getDayOptions, formatFullDate, isSlotPast, type BookingCourt, type DayOption } from '../data/booking'
+import { bookingCourts, loadBookingCourts, saveBookingCourts, hourSlots, getDayOptions, formatFullDate, isSlotPast, type BookingCourt, type DayOption } from '../data/booking'
 import {
   addBooking,
   updateBooking,
@@ -13,13 +13,15 @@ import {
   getBookingAt,
   getBlockAt,
   getBookings,
+  loadAdminStore,
   findOverlappingBooking,
   findOverlappingBlock,
   useBookingStoreVersion,
   type StoredBooking,
 } from '../data/store'
-import { isAdminUnlocked, tryUnlockAdmin, lockAdmin } from '../data/adminAuth'
-import { getPaymentQrCode, savePaymentQrCode } from '../data/paymentQr'
+import { isAdminUnlocked, signInAdmin, lockAdmin } from '../data/adminAuth'
+import { getPaymentQrCode, loadPaymentQrCode, savePaymentQrCode } from '../data/paymentQr'
+import { isSupabaseConfigured } from '../data/supabase'
 
 interface Range {
   courtId: string
@@ -64,25 +66,42 @@ const adminSections: { id: AdminSectionId; label: string }[] = [
 ]
 
 export default function AdminPage() {
-  const [unlocked, setUnlocked] = useState(isAdminUnlocked)
+  const [access, setAccess] = useState<'checking' | 'locked' | 'unlocked'>('checking')
 
-  if (!unlocked) {
-    return <AdminLogin onUnlock={() => setUnlocked(true)} />
+  useEffect(() => {
+    let active = true
+    isAdminUnlocked()
+      .then((unlocked) => {
+        if (active) setAccess(unlocked ? 'unlocked' : 'locked')
+      })
+      .catch(() => {
+        if (active) setAccess('locked')
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  if (access === 'checking') {
+    return <Container className="flex min-h-[68vh] items-center justify-center py-16 text-sm text-ink/60">Checking staff access…</Container>
   }
+  if (access === 'locked') return <AdminLogin onUnlock={() => setAccess('unlocked')} />
 
-  return <AdminDashboard onLock={() => { lockAdmin(); setUnlocked(false) }} />
+  return <AdminDashboard onLock={() => { void lockAdmin().catch(() => undefined).finally(() => setAccess('locked')) }} />
 }
 
 function AdminLogin({ onUnlock }: { onUnlock: () => void }) {
-  const [passcode, setPasscode] = useState('')
-  const [error, setError] = useState(false)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault()
-    if (tryUnlockAdmin(passcode)) {
+    try {
+      await signInAdmin(email, password)
       onUnlock()
-    } else {
-      setError(true)
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : 'Unable to sign in. Try again.')
     }
   }
 
@@ -93,21 +112,35 @@ function AdminLogin({ onUnlock }: { onUnlock: () => void }) {
         className="w-full max-w-sm rounded-card border border-ink/10 bg-sand p-7 shadow-xl shadow-ink/10 sm:p-9"
       >
         <h1 className="font-display text-lg font-semibold text-ink">Staff access</h1>
-        <p className="mt-1 text-sm text-ink/60">Enter the staff passcode to manage bookings.</p>
+        <p className="mt-1 text-sm text-ink/60">Sign in with your authorized staff account.</p>
         <input
-          type="password"
+          type="email"
+          required
           autoFocus
-          value={passcode}
+          autoComplete="username"
+          value={email}
           onChange={(e) => {
-            setPasscode(e.target.value)
-            setError(false)
+            setEmail(e.target.value)
+            setError('')
           }}
-          placeholder="Passcode"
+          placeholder="Email address"
           className="mt-5 w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
         />
-        {error && <p className="mt-2 text-xs font-medium text-tide">Wrong passcode. Try again.</p>}
+        <input
+          type="password"
+          required
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => {
+            setPassword(e.target.value)
+            setError('')
+          }}
+          placeholder="Password"
+          className="mt-5 w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+        />
+        {error && <p role="alert" className="mt-2 text-xs font-medium text-tide">{error}</p>}
         <Button type="submit" variant="primary" className="mt-5 w-full">
-          Unlock
+          Login
         </Button>
       </form>
     </Container>
@@ -116,6 +149,8 @@ function AdminLogin({ onUnlock }: { onUnlock: () => void }) {
 
 function AdminDashboard({ onLock }: { onLock: () => void }) {
   const storeVersion = useBookingStoreVersion() // re-render on any booking/block change
+  const [adminStoreError, setAdminStoreError] = useState('')
+  const [adminStoreLoading, setAdminStoreLoading] = useState(isSupabaseConfigured)
   const [activeSection, setActiveSection] = useState<AdminSectionId>('bookings')
   const reservedGroups = useMemo(() => {
     const groups = new Map<string, StoredBooking[]>()
@@ -144,23 +179,63 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
   const [courtDraft, setCourtDraft] = useState<BookingCourt[]>(() => bookingCourts.map((court) => ({ ...court })))
   const [courtSettingsError, setCourtSettingsError] = useState('')
   const [courtSettingsSaved, setCourtSettingsSaved] = useState(false)
+  const [selectionError, setSelectionError] = useState('')
   const [savedPaymentQr, setSavedPaymentQr] = useState<string | null>(() => getPaymentQrCode())
   const [paymentQrDraft, setPaymentQrDraft] = useState<string | null>(null)
   const [paymentQrFileName, setPaymentQrFileName] = useState('')
   const [paymentQrError, setPaymentQrError] = useState('')
   const [paymentQrStatus, setPaymentQrStatus] = useState('')
   const [isPreparingPaymentQr, setIsPreparingPaymentQr] = useState(false)
+  const [paymentActionError, setPaymentActionError] = useState('')
 
-  function saveCourtSettings(e: FormEvent) {
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+    let active = true
+    const refreshBookings = () => {
+      void loadAdminStore()
+        .then(() => {
+          if (active) setAdminStoreError('')
+        })
+        .catch((error) => {
+          if (active) setAdminStoreError(error instanceof Error ? error.message : 'Could not refresh booking data.')
+        })
+    }
+    Promise.all([loadAdminStore(), loadBookingCourts(), loadPaymentQrCode()])
+      .then(() => {
+        if (!active) return
+        setCourtDraft(bookingCourts.map((court) => ({ ...court })))
+        setSavedPaymentQr(getPaymentQrCode())
+      })
+      .catch((error) => {
+        if (active) setAdminStoreError(error instanceof Error ? error.message : 'Could not load shared admin data.')
+      })
+      .finally(() => {
+        if (active) setAdminStoreLoading(false)
+      })
+    const interval = window.setInterval(refreshBookings, 20_000)
+    window.addEventListener('focus', refreshBookings)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshBookings)
+    }
+  }, [])
+
+  async function saveCourtSettings(e: FormEvent) {
     e.preventDefault()
     if (courtDraft.some((court) => !court.name.trim() || !Number.isFinite(court.rate) || court.rate < 0)) {
       setCourtSettingsError('Enter a name and a valid hourly rate for every court.')
       setCourtSettingsSaved(false)
       return
     }
-    saveBookingCourts(courtDraft)
-    setCourtSettingsError('')
-    setCourtSettingsSaved(true)
+    try {
+      await saveBookingCourts(courtDraft)
+      setCourtSettingsError('')
+      setCourtSettingsSaved(true)
+    } catch (error) {
+      setCourtSettingsError(error instanceof Error ? error.message : 'Could not save court settings.')
+      setCourtSettingsSaved(false)
+    }
   }
 
   async function preparePaymentQr(event: ChangeEvent<HTMLInputElement>) {
@@ -196,11 +271,11 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
     }
   }
 
-  function commitPaymentQr() {
+  async function commitPaymentQr() {
     if (!paymentQrDraft) return
     try {
-      savePaymentQrCode(paymentQrDraft)
-      setSavedPaymentQr(paymentQrDraft)
+      await savePaymentQrCode(paymentQrDraft)
+      setSavedPaymentQr(getPaymentQrCode())
       setPaymentQrDraft(null)
       setPaymentQrStatus('Payment QR code saved.')
       setPaymentQrError('')
@@ -210,9 +285,9 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
     }
   }
 
-  function removePaymentQr() {
+  async function removePaymentQr() {
     try {
-      savePaymentQrCode(null)
+      await savePaymentQrCode(null)
       setSavedPaymentQr(null)
       setPaymentQrDraft(null)
       setPaymentQrFileName('')
@@ -224,12 +299,22 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
     }
   }
 
-  function approvePayment(reference: string) {
-    updateCustomerBookingsByReference(reference, 'confirmed')
+  async function approvePayment(reference: string) {
+    setPaymentActionError('')
+    try {
+      await updateCustomerBookingsByReference(reference, 'confirmed')
+    } catch (error) {
+      setPaymentActionError(error instanceof Error ? error.message : 'Could not approve this payment.')
+    }
   }
 
-  function rejectPayment(reference: string) {
-    updateCustomerBookingsByReference(reference, 'rejected')
+  async function rejectPayment(reference: string) {
+    setPaymentActionError('')
+    try {
+      await updateCustomerBookingsByReference(reference, 'rejected')
+    } catch (error) {
+      setPaymentActionError(error instanceof Error ? error.message : 'Could not reject this payment.')
+    }
   }
 
   function switchDay(d: DayOption) {
@@ -245,6 +330,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
   }
 
   function clickCell(courtId: string, hour: number) {
+    if (adminStoreLoading) return
     const dayIso = activeDayData.iso
     if (isSlotPast(dayIso, hour)) return
 
@@ -281,19 +367,24 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
     })
   }
 
-  function blockSelection(reason: string) {
+  async function blockSelection(reason: string) {
     if (!selection) return
-    addBlockedSlot({
-      courtId: selection.courtId,
-      dayIso: activeDayData.iso,
-      startHour: selection.startHour,
-      endHour: selection.endHour,
-      reason: reason.trim() || undefined,
-    })
-    setSelection(null)
+    setSelectionError('')
+    try {
+      await addBlockedSlot({
+        courtId: selection.courtId,
+        dayIso: activeDayData.iso,
+        startHour: selection.startHour,
+        endHour: selection.endHour,
+        reason: reason.trim() || undefined,
+      })
+      setSelection(null)
+    } catch (error) {
+      setSelectionError(error instanceof Error ? error.message : 'Could not block this time.')
+    }
   }
 
-  function assignReclubSelection() {
+  async function assignReclubSelection() {
     if (!selection) return
     const clash =
       findOverlappingBooking(
@@ -308,23 +399,31 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
         selection.startHour,
         selection.endHour,
       )
-    if (clash) return
+    if (clash) {
+      setSelectionError('That time is no longer available. Refresh the schedule and try again.')
+      return
+    }
 
     const court = bookingCourts.find((item) => item.id === selection.courtId)
-    addBooking({
-      courtId: selection.courtId,
-      courtName: court?.name ?? selection.courtId,
-      dayIso: activeDayData.iso,
-      startHour: selection.startHour,
-      endHour: selection.endHour,
-      rate: court?.rate ?? 0,
-      name: 'Reclub',
-      mobile: '',
-      notes: 'Assigned from Reclub',
-      source: 'reclub',
-      status: 'confirmed',
-    })
-    setSelection(null)
+    setSelectionError('')
+    try {
+      await addBooking({
+        courtId: selection.courtId,
+        courtName: court?.name ?? selection.courtId,
+        dayIso: activeDayData.iso,
+        startHour: selection.startHour,
+        endHour: selection.endHour,
+        rate: court?.rate ?? 0,
+        name: 'Reclub',
+        mobile: '',
+        notes: 'Assigned from Reclub',
+        source: 'reclub',
+        status: 'confirmed',
+      })
+      setSelection(null)
+    } catch (error) {
+      setSelectionError(error instanceof Error ? error.message : 'Could not assign this Reclub booking.')
+    }
   }
 
   return (
@@ -339,6 +438,9 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
           Lock admin
         </Button>
       </div>
+
+      {adminStoreLoading && <p role="status" className="mt-4 text-sm text-ink/60">Loading shared booking data…</p>}
+      {adminStoreError && <p role="alert" className="mt-4 rounded-xl bg-tide/10 px-4 py-3 text-sm text-tide">Could not load Supabase data: {adminStoreError}</p>}
 
       <div className="mt-7 grid min-w-0 gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
         <aside className="h-fit rounded-card border border-ink/10 bg-sand p-3 shadow-xl shadow-ink/5 sm:p-4 lg:sticky lg:top-24">
@@ -377,7 +479,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
         <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 className="font-display text-base font-semibold text-ink">Court names & rates</h2>
-            <p className="mt-1 text-sm text-ink/60">Saved in this browser and shown on its booking calendar.</p>
+            <p className="mt-1 text-sm text-ink/60">Saved to the shared schedule and used across all devices.</p>
           </div>
           <Button type="submit" variant="primary" className="mt-3 self-start sm:mt-0">Save changes</Button>
         </div>
@@ -487,6 +589,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
             {reservedGroups.length} awaiting review
           </span>
         </div>
+        {paymentActionError && <p role="alert" className="mt-4 rounded-xl bg-tide/10 px-4 py-3 text-sm text-tide">{paymentActionError}</p>}
 
         {reservedGroups.length === 0 ? (
           <p className="mt-5 rounded-xl bg-white px-4 py-5 text-center text-sm text-ink/55">
@@ -496,6 +599,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
           <div className="mt-5 grid gap-4 lg:grid-cols-2">
             {reservedGroups.map(({ reference, bookings }) => {
               const customer = bookings[0]
+              const paymentReference = bookings.find((booking) => booking.paymentReference)?.paymentReference
               const total = bookings.reduce(
                 (sum, booking) => sum + (booking.endHour - booking.startHour) * booking.rate,
                 0,
@@ -510,7 +614,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
                         {customer.sport ?? 'Sport not specified'} · Reserved
                       </p>
                       <p className="mt-2 text-xs text-ink/60">
-                        Payment reference: <span className="font-semibold text-ink">{customer.paymentReference || 'Not provided'}</span>
+                        Payment reference: <span className="font-semibold text-ink">{paymentReference || 'Not provided'}</span>
                       </p>
                     </div>
                     <span className="font-display text-base font-semibold text-ink">₱{total.toLocaleString()}</span>
@@ -669,7 +773,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
                       <button
                         key={h.hour}
                         type="button"
-                        disabled={past}
+                        disabled={past || adminStoreLoading}
                         onClick={() => clickCell(court.id, h.hour)}
                         className={cls}
                         title={
@@ -699,6 +803,8 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
       )}
 
       {activeSection === 'bookings' && selection && !assignFormOpen && (
+        <>
+        {selectionError && <p role="alert" className="rounded-xl bg-tide/10 px-4 py-3 text-sm text-tide">{selectionError}</p>}
         <SelectionActionBar
           courtName={bookingCourts.find((c) => c.id === selection.courtId)?.name ?? ''}
           startHour={selection.startHour}
@@ -708,6 +814,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
           onAssignReclub={assignReclubSelection}
           onClear={() => setSelection(null)}
         />
+        </>
       )}
 
       {activeSection === 'bookings' && selection && assignFormOpen && (
@@ -825,8 +932,9 @@ function AssignForm({
   const [email, setEmail] = useState('')
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
 
-  function save() {
+  async function save() {
     if (!name.trim() || !mobile.trim()) {
       setError('Name and mobile number are required.')
       return
@@ -838,21 +946,29 @@ function AssignForm({
       setError('That time was just taken — pick another slot.')
       return
     }
-    addBooking({
-      courtId: selection.courtId,
-      courtName: court?.name ?? selection.courtId,
-      dayIso,
-      startHour: selection.startHour,
-      endHour: selection.endHour,
-      rate: court?.rate ?? 0,
-      name: name.trim(),
-      mobile: mobile.trim(),
-      email: email.trim() || undefined,
-      notes: notes.trim() || undefined,
-      source: 'admin',
-      status: 'confirmed',
-    })
-    onSaved()
+    setSaving(true)
+    setError('')
+    try {
+      await addBooking({
+        courtId: selection.courtId,
+        courtName: court?.name ?? selection.courtId,
+        dayIso,
+        startHour: selection.startHour,
+        endHour: selection.endHour,
+        rate: court?.rate ?? 0,
+        name: name.trim(),
+        mobile: mobile.trim(),
+        email: email.trim() || undefined,
+        notes: notes.trim() || undefined,
+        source: 'admin',
+        status: 'confirmed',
+      })
+      onSaved()
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not save this booking.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -903,8 +1019,8 @@ function AssignForm({
         <Button variant="secondary" className="!flex-1 !text-ink !border-ink/20" onClick={onCancel}>
           Cancel
         </Button>
-        <Button variant="primary" className="!flex-1" onClick={save}>
-          Save booking
+        <Button variant="primary" className="!flex-1" onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save booking'}
         </Button>
       </div>
     </div>
@@ -918,8 +1034,9 @@ function BookingEditModal({ booking, onClose }: { booking: StoredBooking; onClos
   const [startHour, setStartHour] = useState(booking.startHour)
   const [endHour, setEndHour] = useState(booking.endHour)
   const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
 
-  function saveReschedule() {
+  async function saveReschedule() {
     if (endHour <= startHour) {
       setError('End time must be after start time.')
       return
@@ -932,20 +1049,36 @@ function BookingEditModal({ booking, onClose }: { booking: StoredBooking; onClos
       return
     }
     const court = bookingCourts.find((c) => c.id === courtId)
-    updateBooking(booking.id, {
-      dayIso,
-      courtId,
-      courtName: court?.name ?? courtId,
-      startHour,
-      endHour,
-      rate: court?.rate ?? booking.rate,
-    })
-    onClose()
+    setSaving(true)
+    setError('')
+    try {
+      await updateBooking(booking.id, {
+        dayIso,
+        courtId,
+        courtName: court?.name ?? courtId,
+        startHour,
+        endHour,
+        rate: court?.rate ?? booking.rate,
+      })
+      onClose()
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not update this booking.')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  function cancelBooking() {
-    removeBooking(booking.id)
-    onClose()
+  async function cancelBooking() {
+    setSaving(true)
+    setError('')
+    try {
+      await removeBooking(booking.id)
+      onClose()
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : 'Could not cancel this booking.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -1041,10 +1174,10 @@ function BookingEditModal({ booking, onClose }: { booking: StoredBooking; onClos
         {error && <p className="mt-3 text-xs font-medium text-tide">{error}</p>}
 
         <div className="mt-6 flex gap-3">
-          <Button variant="secondary" className="!flex-1 !text-tide !border-tide/40" onClick={cancelBooking}>
+          <Button variant="secondary" className="!flex-1 !text-tide !border-tide/40" onClick={cancelBooking} disabled={saving}>
             Cancel booking
           </Button>
-          <Button variant="primary" className="!flex-1" onClick={saveReschedule}>
+          <Button variant="primary" className="!flex-1" onClick={saveReschedule} disabled={saving}>
             Save changes
           </Button>
         </div>
@@ -1061,9 +1194,20 @@ function BookingEditModal({ booking, onClose }: { booking: StoredBooking; onClos
 }
 
 function BlockModal({ blockId, onClose }: { blockId: string; onClose: () => void }) {
-  function unblock() {
-    removeBlockedSlot(blockId)
-    onClose()
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function unblock() {
+    setSaving(true)
+    setError('')
+    try {
+      await removeBlockedSlot(blockId)
+      onClose()
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : 'Could not unblock this time.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -1081,12 +1225,13 @@ function BlockModal({ blockId, onClose }: { blockId: string; onClose: () => void
           <ModalCloseButton onClose={onClose} />
         </div>
         <p className="mt-1 text-sm text-ink/60">This slot is closed off from customer bookings.</p>
+        {error && <p role="alert" className="mt-3 text-xs font-medium text-tide">{error}</p>}
         <div className="mt-6 flex gap-3">
           <Button variant="secondary" className="!flex-1 !text-ink !border-ink/20" onClick={onClose}>
             Close
           </Button>
-          <Button variant="primary" className="!flex-1" onClick={unblock}>
-            Unblock
+          <Button variant="primary" className="!flex-1" onClick={unblock} disabled={saving}>
+            {saving ? 'Saving…' : 'Unblock'}
           </Button>
         </div>
       </div>

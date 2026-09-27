@@ -1,35 +1,35 @@
-// There's no backend yet, so this is a simple client-side passcode gate —
-// good enough to keep casual visitors out of /admin, but NOT real security
-// (anyone who reads the bundled JS can see this value). Change it before
-// launch, and swap this for real authentication once there's a backend.
-export const ADMIN_PASSCODE = '2500heritage'
+import { requireSupabase } from './supabase'
 
-const UNLOCK_KEY = '2500h-admin-unlocked'
+export async function signInAdmin(email: string, password: string) {
+  const client = requireSupabase()
+  const { error: signInError } = await client.auth.signInWithPassword({
+    email: email.trim(),
+    password,
+  })
+  if (signInError) throw new Error('Email or password is incorrect.')
 
-export function isAdminUnlocked() {
-  try {
-    return sessionStorage.getItem(UNLOCK_KEY) === '1'
-  } catch {
-    return false
+  const { data: isAdmin, error: roleError } = await client.rpc('is_admin')
+  if (roleError) {
+    await client.auth.signOut()
+    throw new Error('Could not verify admin access. Check that the Supabase setup SQL has been run.')
+  }
+  if (isAdmin !== true) {
+    await client.auth.signOut()
+    throw new Error('This account does not have admin access yet.')
   }
 }
 
-export function tryUnlockAdmin(passcode: string) {
-  const ok = passcode === ADMIN_PASSCODE
-  if (ok) {
-    try {
-      sessionStorage.setItem(UNLOCK_KEY, '1')
-    } catch {
-      // sessionStorage unavailable — unlock still works for this render, just won't persist
-    }
-  }
-  return ok
+export async function isAdminUnlocked() {
+  const client = requireSupabase()
+  const { data: sessionData, error: sessionError } = await client.auth.getSession()
+  if (sessionError || !sessionData.session) return false
+
+  const { data: isAdmin, error } = await client.rpc('is_admin')
+  return !error && isAdmin === true
 }
 
-export function lockAdmin() {
-  try {
-    sessionStorage.removeItem(UNLOCK_KEY)
-  } catch {
-    // ignore
-  }
+export async function lockAdmin() {
+  const client = requireSupabase()
+  const { error } = await client.auth.signOut()
+  if (error) throw error
 }

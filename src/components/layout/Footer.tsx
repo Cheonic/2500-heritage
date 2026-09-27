@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { navLinks } from '../../data/nav'
-import { tryUnlockAdmin } from '../../data/adminAuth'
+import { signInAdmin } from '../../data/adminAuth'
 import Logo from '../ui/Logo'
 import Container from '../ui/Container'
 import Button from '../ui/Button'
@@ -15,8 +15,9 @@ export default function Footer() {
   const location = useLocation()
   const navigate = useNavigate()
   const [loginOpen, setLoginOpen] = useState(false)
-  const [passcode, setPasscode] = useState('')
-  const [loginError, setLoginError] = useState(false)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [loginError, setLoginError] = useState('')
 
   useEffect(() => {
     if (!loginOpen) return
@@ -35,18 +36,20 @@ export default function Footer() {
   }, [loginOpen])
 
   function openLogin() {
-    setPasscode('')
-    setLoginError(false)
+    setEmail('')
+    setPassword('')
+    setLoginError('')
     setLoginOpen(true)
   }
 
-  function submitLogin(event: FormEvent<HTMLFormElement>) {
+  async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (tryUnlockAdmin(passcode)) {
+    try {
+      await signInAdmin(email, password)
       setLoginOpen(false)
       navigate('/admin')
-    } else {
-      setLoginError(true)
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Unable to sign in. Try again.')
     }
   }
 
@@ -152,7 +155,7 @@ export default function Footer() {
                 <h2 id="staff-login-title" className="font-display text-lg font-semibold text-ink">
                   Staff login
                 </h2>
-                <p className="mt-1 text-sm text-ink/60">Enter the staff passcode to manage bookings.</p>
+                <p className="mt-1 text-sm text-ink/60">Sign in with your authorized staff account.</p>
               </div>
               <button
                 type="button"
@@ -165,24 +168,40 @@ export default function Footer() {
             </div>
 
             <form onSubmit={submitLogin}>
-              <label htmlFor="staff-login-passcode" className="mt-5 block text-sm font-medium text-ink/75">
-                Passcode
+              <label htmlFor="staff-login-email" className="mt-5 block text-sm font-medium text-ink/75">
+                Email
               </label>
               <input
-                id="staff-login-passcode"
-                type="password"
+                id="staff-login-email"
+                type="email"
+                required
                 autoFocus
-                autoComplete="current-password"
-                value={passcode}
+                autoComplete="username"
+                value={email}
                 onChange={(event) => {
-                  setPasscode(event.target.value)
-                  setLoginError(false)
+                  setEmail(event.target.value)
+                  setLoginError('')
+                }}
+                className="mt-2 w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+              />
+              <label htmlFor="staff-login-password" className="mt-4 block text-sm font-medium text-ink/75">
+                Password
+              </label>
+              <input
+                id="staff-login-password"
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => {
+                  setPassword(event.target.value)
+                  setLoginError('')
                 }}
                 className="mt-2 w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
               />
               {loginError && (
                 <p role="alert" className="mt-2 text-xs font-medium text-tide">
-                  Wrong passcode. Try again.
+                  {loginError}
                 </p>
               )}
               <Button type="submit" variant="primary" className="mt-5 w-full">

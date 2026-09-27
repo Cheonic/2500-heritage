@@ -1,4 +1,5 @@
 import { notifyBookingStoreChanged } from './store'
+import { isSupabaseConfigured, requireSupabase } from './supabase'
 
 export interface BookingCourt {
   id: string
@@ -45,7 +46,20 @@ function readBookingCourts(): BookingCourt[] {
 
 export const bookingCourts: BookingCourt[] = readBookingCourts()
 
-export function saveBookingCourts(updatedCourts: readonly BookingCourt[]) {
+export async function loadBookingCourts() {
+  if (!isSupabaseConfigured) return
+  const { data, error } = await requireSupabase().from('courts').select('id, name, rate').order('id')
+  if (error) throw error
+  const next = defaultBookingCourts.map((court) => {
+    const stored = data?.find((item) => item.id === court.id)
+    if (!stored || typeof stored.name !== 'string' || !Number.isFinite(Number(stored.rate))) return { ...court }
+    return { ...court, name: stored.name, rate: Number(stored.rate) }
+  })
+  bookingCourts.splice(0, bookingCourts.length, ...next)
+  notifyBookingStoreChanged()
+}
+
+export async function saveBookingCourts(updatedCourts: readonly BookingCourt[]) {
   const next = defaultBookingCourts.map((defaultCourt) => {
     const updated = updatedCourts.find((court) => court.id === defaultCourt.id)
     if (
@@ -59,11 +73,20 @@ export function saveBookingCourts(updatedCourts: readonly BookingCourt[]) {
     return { ...defaultCourt, name: updated.name.trim(), rate: updated.rate }
   })
 
+  if (isSupabaseConfigured) {
+    const { error } = await requireSupabase().from('courts').upsert(
+      next.map((court) => ({ id: court.id, name: court.name, rate: court.rate, updated_at: new Date().toISOString() })),
+    )
+    if (error) throw error
+  }
+
   bookingCourts.splice(0, bookingCourts.length, ...next)
-  try {
-    localStorage.setItem(COURTS_KEY, JSON.stringify(next))
-  } catch {
-    // Keep the updated values for this session when localStorage is unavailable.
+  if (!isSupabaseConfigured) {
+    try {
+      localStorage.setItem(COURTS_KEY, JSON.stringify(next))
+    } catch {
+      // Keep the updated values for this session when localStorage is unavailable.
+    }
   }
   notifyBookingStoreChanged()
 }

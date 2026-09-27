@@ -1,33 +1,23 @@
-// Shared "database" for the booking system.
-//
-// There's no backend yet, so this persists to localStorage and broadcasts a
-// custom event whenever it changes. Both the public Booking page and the
-// Admin page subscribe to it (via `useBookingStore` / `useSyncExternalStore`)
-// so a block, reschedule, or manual assignment made in Admin shows up
-// immediately anywhere else that's open.
-//
-// Swap the bodies of these functions for real API calls whenever a backend
-// exists — the shape (StoredBooking / BlockedSlot) can stay the same.
+// Booking data uses Supabase when configured and localStorage as a local-only fallback.
 
 import { useSyncExternalStore } from 'react'
+import { isSupabaseConfigured, requireSupabase } from './supabase'
 
 export interface StoredBooking {
   id: string
   reference: string
-  /** Customer-provided GCash/Maya transaction reference for payment review. */
   paymentReference?: string
   courtId: string
   courtName: string
   sport?: string
   dayIso: string
   startHour: number
-  endHour: number // exclusive
+  endHour: number
   rate: number
   name: string
   mobile: string
   email?: string
   notes?: string
-  /** 'customer' = booked through the public site. 'admin' = added manually by staff. */
   source: 'customer' | 'admin' | 'reclub'
   status: 'confirmed' | 'reserved' | 'pending' | 'rejected'
   createdAt: string
@@ -38,9 +28,59 @@ export interface BlockedSlot {
   courtId: string
   dayIso: string
   startHour: number
-  endHour: number // exclusive
+  endHour: number
   reason?: string
   createdAt: string
+}
+
+export interface CustomerBookingSlot {
+  courtId: string
+  courtName: string
+  dayIso: string
+  startHour: number
+  endHour: number
+  rate: number
+}
+
+interface DbBooking {
+  id: string
+  reference: string
+  payment_reference: string | null
+  court_id: string
+  court_name: string
+  sport: string | null
+  day_iso: string
+  start_hour: number
+  end_hour: number
+  rate: number | string
+  name: string
+  mobile: string
+  email: string | null
+  notes: string | null
+  source: StoredBooking['source']
+  status: StoredBooking['status']
+  created_at: string
+}
+
+interface DbBlock {
+  id: string
+  court_id: string
+  day_iso: string
+  start_hour: number
+  end_hour: number
+  reason: string | null
+  created_at: string
+}
+
+interface PublicScheduleRow {
+  id: string
+  court_id: string
+  day_iso: string
+  start_hour: number
+  end_hour: number
+  status: StoredBooking['status'] | 'blocked'
+  source: StoredBooking['source'] | null
+  sport: string | null
 }
 
 const BOOKINGS_KEY = '2500h-bookings'
@@ -60,17 +100,119 @@ function write<T>(key: string, value: T[]) {
   try {
     localStorage.setItem(key, JSON.stringify(value))
   } catch {
-    // localStorage unavailable (private mode, quota, etc.) — changes just won't persist
+    // Browser storage may be unavailable or full.
   }
-  notifyBookingStoreChanged()
+}
+
+let bookingsCache: StoredBooking[] = isSupabaseConfigured ? [] : read<StoredBooking>(BOOKINGS_KEY)
+let blocksCache: BlockedSlot[] = isSupabaseConfigured ? [] : read<BlockedSlot>(BLOCKS_KEY)
+
+function fromDbBooking(row: DbBooking): StoredBooking {
+  return {
+    id: row.id,
+    reference: row.reference,
+    paymentReference: row.payment_reference ?? undefined,
+    courtId: row.court_id,
+    courtName: row.court_name,
+    sport: row.sport ?? undefined,
+    dayIso: row.day_iso,
+    startHour: Number(row.start_hour),
+    endHour: Number(row.end_hour),
+    rate: Number(row.rate),
+    name: row.name,
+    mobile: row.mobile,
+    email: row.email ?? undefined,
+    notes: row.notes ?? undefined,
+    source: row.source,
+    status: row.status,
+    createdAt: row.created_at,
+  }
+}
+
+function fromDbBlock(row: DbBlock): BlockedSlot {
+  return {
+    id: row.id,
+    courtId: row.court_id,
+    dayIso: row.day_iso,
+    startHour: Number(row.start_hour),
+    endHour: Number(row.end_hour),
+    reason: row.reason ?? undefined,
+    createdAt: row.created_at,
+  }
+}
+
+function toDbBooking(booking: Omit<StoredBooking, 'id' | 'createdAt'>) {
+  return {
+    reference: booking.reference,
+    payment_reference: booking.paymentReference ?? null,
+    court_id: booking.courtId,
+    court_name: booking.courtName,
+    sport: booking.sport ?? null,
+    day_iso: booking.dayIso,
+    start_hour: booking.startHour,
+    end_hour: booking.endHour,
+    rate: booking.rate,
+    name: booking.name,
+    mobile: booking.mobile,
+    email: booking.email ?? null,
+    notes: booking.notes ?? null,
+    source: booking.source,
+    status: booking.status,
+  }
+}
+
+function mapPublicSchedule(rows: PublicScheduleRow[]) {
+  const bookings = rows
+    .filter((row) => row.status !== 'blocked')
+    .map<StoredBooking>((row) => ({
+      id: row.id,
+      reference: '',
+      courtId: row.court_id,
+      courtName: row.court_id,
+      sport: row.sport ?? undefined,
+      dayIso: row.day_iso,
+      startHour: Number(row.start_hour),
+      endHour: Number(row.end_hour),
+      rate: 0,
+      name: row.source === 'reclub' ? 'Reclub' : 'Reserved',
+      mobile: '',
+      source: row.source ?? 'customer',
+      status: row.status as StoredBooking['status'],
+      createdAt: '',
+    }))
+  const blocks = rows
+    .filter((row) => row.status === 'blocked')
+    .map<BlockedSlot>((row) => ({
+      id: row.id,
+      courtId: row.court_id,
+      dayIso: row.day_iso,
+      startHour: Number(row.start_hour),
+      endHour: Number(row.end_hour),
+      createdAt: '',
+    }))
+  return { bookings, blocks }
 }
 
 export function notifyBookingStoreChanged() {
   window.dispatchEvent(new Event(CHANGE_EVENT))
 }
 
+function replaceBookingCache(next: StoredBooking[]) {
+  bookingsCache = next
+  if (!isSupabaseConfigured) write(BOOKINGS_KEY, bookingsCache)
+  notifyBookingStoreChanged()
+}
+
+function replaceBlockCache(next: BlockedSlot[]) {
+  blocksCache = next
+  if (!isSupabaseConfigured) write(BLOCKS_KEY, blocksCache)
+  notifyBookingStoreChanged()
+}
+
 export function genReference() {
-  const rand = Math.random().toString(36).slice(2, 7).toUpperCase()
+  const rand = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase()
+    : Math.random().toString(36).slice(2, 18).toUpperCase()
   return `2500H-${rand}`
 }
 
@@ -82,16 +224,135 @@ function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number) {
   return aStart < bEnd && bStart < aEnd
 }
 
-// ---------- Bookings ----------
+export async function loadPublicSchedule(from: string, to: string) {
+  if (!isSupabaseConfigured) return
+  const { data, error } = await requireSupabase().rpc('get_public_schedule', {
+    p_from: from,
+    p_to: to,
+  })
+  if (error) throw error
 
-export function getBookings(): StoredBooking[] {
-  return read<StoredBooking>(BOOKINGS_KEY)
+  const { bookings, blocks } = mapPublicSchedule((data ?? []) as PublicScheduleRow[])
+  bookingsCache = [...bookingsCache.filter((item) => item.dayIso < from || item.dayIso > to), ...bookings]
+  blocksCache = [...blocksCache.filter((item) => item.dayIso < from || item.dayIso > to), ...blocks]
+  notifyBookingStoreChanged()
 }
 
-export function addBooking(
+export async function loadAdminStore() {
+  if (!isSupabaseConfigured) return
+  const client = requireSupabase()
+  const [bookingsResult, blocksResult] = await Promise.all([
+    client.from('bookings').select('*').order('day_iso').order('start_hour'),
+    client.from('blocked_slots').select('*').order('day_iso').order('start_hour'),
+  ])
+  if (bookingsResult.error) throw bookingsResult.error
+  if (blocksResult.error) throw blocksResult.error
+
+  bookingsCache = ((bookingsResult.data ?? []) as DbBooking[]).map(fromDbBooking)
+  blocksCache = ((blocksResult.data ?? []) as DbBlock[]).map(fromDbBlock)
+  notifyBookingStoreChanged()
+}
+
+export async function lookupCustomerBookings(reference: string, mobile: string) {
+  if (!isSupabaseConfigured) {
+    const normalizedMobile = mobile.replace(/\D/g, '')
+    return getBookings().filter(
+      (booking) => booking.source === 'customer'
+        && booking.reference.toUpperCase() === reference.trim().toUpperCase()
+        && booking.mobile.replace(/\D/g, '') === normalizedMobile,
+    )
+  }
+  const { data, error } = await requireSupabase().rpc('lookup_customer_booking', {
+    p_reference: reference.trim(),
+    p_mobile: mobile.trim(),
+  })
+  if (error) throw error
+  return ((data ?? []) as DbBooking[]).map(fromDbBooking)
+}
+
+export function getBookings(): StoredBooking[] {
+  return bookingsCache
+}
+
+export async function createCustomerBooking(input: {
+  reference: string
+  name: string
+  mobile: string
+  email?: string
+  sport: string
+  paymentReference: string
+  slots: CustomerBookingSlot[]
+}) {
+  if (!isSupabaseConfigured) {
+    const reference = input.reference || genReference()
+    for (const slot of input.slots) {
+      await addBooking({
+        reference,
+        paymentReference: input.slots.indexOf(slot) === 0 ? input.paymentReference : undefined,
+        ...slot,
+        sport: input.sport,
+        name: input.name,
+        mobile: input.mobile,
+        email: input.email,
+        source: 'customer',
+        status: 'reserved',
+      })
+    }
+    return reference
+  }
+
+  const { data, error } = await requireSupabase().rpc('create_customer_booking', {
+    p_reference: input.reference,
+    p_name: input.name,
+    p_mobile: input.mobile,
+    p_email: input.email ?? null,
+    p_sport: input.sport,
+    p_payment_reference: input.paymentReference,
+    p_slots: input.slots.map((slot) => ({
+      court_id: slot.courtId,
+      day_iso: slot.dayIso,
+      start_hour: slot.startHour,
+      end_hour: slot.endHour,
+    })),
+  })
+  if (error) throw error
+
+  const reference = String(data)
+  const optimisticRows = input.slots.map<StoredBooking>((slot, index) => ({
+    id: `pending-${reference}-${index}`,
+    reference,
+    paymentReference: index === 0 ? input.paymentReference : undefined,
+    ...slot,
+    sport: input.sport,
+    name: input.name,
+    mobile: input.mobile,
+    email: input.email,
+    source: 'customer',
+    status: 'reserved',
+    createdAt: new Date().toISOString(),
+  }))
+  bookingsCache = [...bookingsCache, ...optimisticRows]
+  notifyBookingStoreChanged()
+  return reference
+}
+
+export async function addBooking(
   input: Omit<StoredBooking, 'id' | 'reference' | 'createdAt' | 'status'> &
     Partial<Pick<StoredBooking, 'status' | 'reference'>>,
-): StoredBooking {
+): Promise<StoredBooking> {
+  if (isSupabaseConfigured) {
+    const payload = toDbBooking({
+      ...input,
+      reference: input.reference ?? genReference(),
+      status: input.status ?? 'confirmed',
+    })
+    const { data, error } = await requireSupabase().from('bookings').insert(payload).select('*').single()
+    if (error) throw error
+    const booking = fromDbBooking(data as DbBooking)
+    replaceBookingCache([...bookingsCache.filter((item) => !item.id.startsWith('pending-')), booking])
+    return booking
+  }
+
   const booking: StoredBooking = {
     ...input,
     id: genId(),
@@ -99,47 +360,83 @@ export function addBooking(
     status: input.status ?? 'confirmed',
     createdAt: new Date().toISOString(),
   }
-  write(BOOKINGS_KEY, [...getBookings(), booking])
+  replaceBookingCache([...bookingsCache, booking])
   return booking
 }
 
-export function updateBooking(id: string, patch: Partial<StoredBooking>) {
-  write(
-    BOOKINGS_KEY,
-    getBookings().map((b) => (b.id === id ? { ...b, ...patch } : b)),
-  )
+export async function updateBooking(id: string, patch: Partial<StoredBooking>) {
+  if (isSupabaseConfigured) {
+    const columnMap: Partial<Record<keyof StoredBooking, string>> = {
+      reference: 'reference',
+      paymentReference: 'payment_reference',
+      courtId: 'court_id',
+      courtName: 'court_name',
+      sport: 'sport',
+      dayIso: 'day_iso',
+      startHour: 'start_hour',
+      endHour: 'end_hour',
+      rate: 'rate',
+      name: 'name',
+      mobile: 'mobile',
+      email: 'email',
+      notes: 'notes',
+      source: 'source',
+      status: 'status',
+    }
+    const dbPatch: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(patch) as [keyof StoredBooking, unknown][]) {
+      const column = columnMap[key]
+      if (column) dbPatch[column] = value ?? null
+    }
+    const { data, error } = await requireSupabase()
+      .from('bookings').update(dbPatch).eq('id', id).select('*').single()
+    if (error) throw error
+    const updated = fromDbBooking(data as DbBooking)
+    replaceBookingCache(bookingsCache.map((booking) => booking.id === id ? updated : booking))
+    return
+  }
+  replaceBookingCache(bookingsCache.map((booking) => (booking.id === id ? { ...booking, ...patch } : booking)))
 }
 
-export function updateCustomerBookingsByReference(
+export async function updateCustomerBookingsByReference(
   reference: string,
   status: StoredBooking['status'],
 ) {
-  write(
-    BOOKINGS_KEY,
-    getBookings().map((booking) =>
-      booking.reference === reference && booking.source === 'customer'
-        ? { ...booking, status }
-        : booking,
-    ),
-  )
+  if (isSupabaseConfigured) {
+    const { data, error } = await requireSupabase()
+      .from('bookings')
+      .update({ status })
+      .eq('reference', reference)
+      .eq('source', 'customer')
+      .select('*')
+    if (error) throw error
+    const updatedRows = ((data ?? []) as DbBooking[]).map(fromDbBooking)
+    const updatedById = new Map(updatedRows.map((booking) => [booking.id, booking]))
+    replaceBookingCache(bookingsCache.map((booking) => updatedById.get(booking.id) ?? booking))
+    return
+  }
+  replaceBookingCache(bookingsCache.map((booking) =>
+    booking.reference === reference && booking.source === 'customer' ? { ...booking, status } : booking,
+  ))
 }
 
-export function removeBooking(id: string) {
-  write(BOOKINGS_KEY, getBookings().filter((b) => b.id !== id))
+export async function removeBooking(id: string) {
+  if (isSupabaseConfigured) {
+    const { error } = await requireSupabase().from('bookings').delete().eq('id', id)
+    if (error) throw error
+  }
+  replaceBookingCache(bookingsCache.filter((booking) => booking.id !== id))
 }
 
-/** Booking that occupies this exact court/day/hour, if any. */
 export function getBookingAt(dayIso: string, courtId: string, hour: number) {
-  return getBookings().find(
-    (b) =>
-      b.status !== 'rejected' &&
-      b.dayIso === dayIso &&
-      b.courtId === courtId &&
-      overlaps(b.startHour, b.endHour, hour, hour + 1),
+  return bookingsCache.find((booking) =>
+    booking.status !== 'rejected'
+    && booking.dayIso === dayIso
+    && booking.courtId === courtId
+    && overlaps(booking.startHour, booking.endHour, hour, hour + 1),
   )
 }
 
-/** Any booking that would overlap this range on this court/day — used to validate reschedules/manual assigns. */
 export function findOverlappingBooking(
   dayIso: string,
   courtId: string,
@@ -147,35 +444,51 @@ export function findOverlappingBooking(
   endHour: number,
   excludeId?: string,
 ) {
-  return getBookings().find(
-    (b) =>
-      b.id !== excludeId &&
-      b.status !== 'rejected' &&
-      b.dayIso === dayIso &&
-      b.courtId === courtId &&
-      overlaps(b.startHour, b.endHour, startHour, endHour),
+  return bookingsCache.find((booking) =>
+    booking.id !== excludeId
+    && booking.status !== 'rejected'
+    && booking.dayIso === dayIso
+    && booking.courtId === courtId
+    && overlaps(booking.startHour, booking.endHour, startHour, endHour),
   )
 }
 
-// ---------- Admin-blocked slots ----------
-
 export function getBlockedSlots(): BlockedSlot[] {
-  return read<BlockedSlot>(BLOCKS_KEY)
+  return blocksCache
 }
 
-export function addBlockedSlot(input: Omit<BlockedSlot, 'id' | 'createdAt'>): BlockedSlot {
+export async function addBlockedSlot(input: Omit<BlockedSlot, 'id' | 'createdAt'>): Promise<BlockedSlot> {
+  if (isSupabaseConfigured) {
+    const { data, error } = await requireSupabase().from('blocked_slots').insert({
+      court_id: input.courtId,
+      day_iso: input.dayIso,
+      start_hour: input.startHour,
+      end_hour: input.endHour,
+      reason: input.reason ?? null,
+    }).select('*').single()
+    if (error) throw error
+    const block = fromDbBlock(data as DbBlock)
+    replaceBlockCache([...blocksCache, block])
+    return block
+  }
   const block: BlockedSlot = { ...input, id: genId(), createdAt: new Date().toISOString() }
-  write(BLOCKS_KEY, [...getBlockedSlots(), block])
+  replaceBlockCache([...blocksCache, block])
   return block
 }
 
-export function removeBlockedSlot(id: string) {
-  write(BLOCKS_KEY, getBlockedSlots().filter((b) => b.id !== id))
+export async function removeBlockedSlot(id: string) {
+  if (isSupabaseConfigured) {
+    const { error } = await requireSupabase().from('blocked_slots').delete().eq('id', id)
+    if (error) throw error
+  }
+  replaceBlockCache(blocksCache.filter((block) => block.id !== id))
 }
 
 export function getBlockAt(dayIso: string, courtId: string, hour: number) {
-  return getBlockedSlots().find(
-    (b) => b.dayIso === dayIso && b.courtId === courtId && overlaps(b.startHour, b.endHour, hour, hour + 1),
+  return blocksCache.find((block) =>
+    block.dayIso === dayIso
+    && block.courtId === courtId
+    && overlaps(block.startHour, block.endHour, hour, hour + 1),
   )
 }
 
@@ -186,23 +499,17 @@ export function findOverlappingBlock(
   endHour: number,
   excludeId?: string,
 ) {
-  return getBlockedSlots().find(
-    (b) =>
-      b.id !== excludeId &&
-      b.dayIso === dayIso &&
-      b.courtId === courtId &&
-      overlaps(b.startHour, b.endHour, startHour, endHour),
+  return blocksCache.find((block) =>
+    block.id !== excludeId
+    && block.dayIso === dayIso
+    && block.courtId === courtId
+    && overlaps(block.startHour, block.endHour, startHour, endHour),
   )
 }
 
-// ---------- Combined availability ----------
-
-/** True if a customer should NOT be able to select this hour (booked by anyone, or blocked by staff). */
 export function isSlotTaken(dayIso: string, courtId: string, hour: number) {
   return Boolean(getBookingAt(dayIso, courtId, hour) || getBlockAt(dayIso, courtId, hour))
 }
-
-// ---------- React subscription ----------
 
 function subscribe(callback: () => void) {
   window.addEventListener(CHANGE_EVENT, callback)
@@ -221,11 +528,6 @@ window.addEventListener('storage', () => {
   snapshotVersion++
 })
 
-/** Re-renders the calling component whenever booking data or court settings change. */
 export function useBookingStoreVersion() {
-  return useSyncExternalStore(
-    subscribe,
-    () => snapshotVersion,
-    () => 0,
-  )
+  return useSyncExternalStore(subscribe, () => snapshotVersion, () => 0)
 }

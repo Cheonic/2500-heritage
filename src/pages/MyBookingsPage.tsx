@@ -1,16 +1,20 @@
-import { useMemo } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import Container from '../components/ui/Container'
 import SectionHeading from '../components/ui/SectionHeading'
 import Button from '../components/ui/Button'
 import { formatFullDate } from '../data/booking'
-import { getBookings, useBookingStoreVersion, type StoredBooking } from '../data/store'
+import { lookupCustomerBookings, type StoredBooking } from '../data/store'
+import { isSupabaseConfigured } from '../data/supabase'
 
 export default function MyBookingsPage() {
-  const version = useBookingStoreVersion()
+  const [referenceInput, setReferenceInput] = useState('')
+  const [mobileInput, setMobileInput] = useState('')
+  const [bookings, setBookings] = useState<StoredBooking[]>([])
+  const [lookupState, setLookupState] = useState<'idle' | 'loading' | 'found' | 'empty' | 'error'>('idle')
+  const [lookupError, setLookupError] = useState('')
   const bookingGroups = useMemo(() => {
     const groups = new Map<string, StoredBooking[]>()
-
-    getBookings()
+    bookings
       .filter((booking) => booking.source === 'customer')
       .forEach((booking) => {
         const group = groups.get(booking.reference) ?? []
@@ -27,24 +31,70 @@ export default function MyBookingsPage() {
         createdAt: bookings[0]?.createdAt ?? '',
       }))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-  }, [version])
+  }, [bookings])
+
+  async function lookUpBooking(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setLookupState('loading')
+    setLookupError('')
+    try {
+      const result = await lookupCustomerBookings(referenceInput, mobileInput)
+      setBookings(result)
+      setLookupState(result.length > 0 ? 'found' : 'empty')
+    } catch (error) {
+      setLookupError(error instanceof Error ? error.message : 'Could not look up this booking.')
+      setLookupState('error')
+    }
+  }
 
   return (
     <section className="bg-sand-dim py-14 sm:py-20">
       <Container className="flex flex-col gap-8">
         <SectionHeading
           title="My Bookings"
-          lede="Bookings saved in this browser appear here. Use the same device and browser you booked with."
+          lede={isSupabaseConfigured
+            ? 'Enter your booking reference and mobile number to check your booking status from any device.'
+            : 'Enter your booking reference and mobile number to check bookings saved in this browser.'}
         />
 
-        {bookingGroups.length === 0 ? (
+        <form onSubmit={lookUpBooking} className="grid gap-3 rounded-card border border-ink/10 bg-sand p-5 shadow-sm sm:grid-cols-[1fr_1fr_auto] sm:items-end sm:p-6">
+          <label className="grid gap-1.5 text-sm font-medium text-ink/75">
+            Booking reference
+            <input
+              required
+              value={referenceInput}
+              onChange={(event) => setReferenceInput(event.target.value)}
+              placeholder="2500H-XXXXX"
+              className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+            />
+          </label>
+          <label className="grid gap-1.5 text-sm font-medium text-ink/75">
+            Mobile number used for booking
+            <input
+              required
+              type="tel"
+              value={mobileInput}
+              onChange={(event) => setMobileInput(event.target.value)}
+              placeholder="09XX XXX XXXX"
+              className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+            />
+          </label>
+          <Button type="submit" variant="primary" disabled={lookupState === 'loading'} className="sm:min-w-36">
+            {lookupState === 'loading' ? 'Checking…' : 'Check booking'}
+          </Button>
+        </form>
+
+        {lookupState === 'error' && <p role="alert" className="text-sm font-medium text-tide">{lookupError}</p>}
+        {lookupState === 'empty' && (
           <div className="rounded-card border border-ink/10 bg-sand p-8 text-center shadow-sm sm:p-10">
-            <p className="text-sm text-ink/65">No bookings found on this device yet.</p>
+            <p className="text-sm text-ink/65">No booking matched that reference and mobile number.</p>
             <Button href="/booking" variant="primary" className="mt-5">
               Reserve a Court
             </Button>
           </div>
-        ) : (
+        )}
+
+        {bookingGroups.length > 0 && (
           <div className="grid gap-4">
             {bookingGroups.map(({ reference, bookings }) => (
               <article

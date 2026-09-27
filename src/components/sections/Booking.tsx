@@ -6,6 +6,7 @@ import SportIllustration from '../ui/SportIllustration'
 import ReclubLogo from '../ui/ReclubLogo'
 import {
   bookingCourts,
+  loadBookingCourts,
   hourSlots,
   getDayOptions,
   formatFullDate,
@@ -15,8 +16,9 @@ import {
   type BookingCourt,
   type HourSlot,
 } from '../../data/booking'
-import { addBooking, genReference, getBookingAt, getBlockAt, useBookingStoreVersion } from '../../data/store'
-import { getPaymentQrCode } from '../../data/paymentQr'
+import { createCustomerBooking, genReference, getBookingAt, getBlockAt, loadPublicSchedule, useBookingStoreVersion } from '../../data/store'
+import { isSupabaseConfigured } from '../../data/supabase'
+import { getPaymentQrCode, loadPaymentQrCode } from '../../data/paymentQr'
 import { sports } from '../../data/sports'
 import qrPlaceholder from '../../assets/payment-qr-placeholder.png'
 
@@ -58,6 +60,37 @@ export default function Booking() {
   const [form, setForm] = useState({ name: '', mobile: '', email: '' })
   const [paymentTransactionReference, setPaymentTransactionReference] = useState('')
   const [reference, setReference] = useState('')
+  const [scheduleLoading, setScheduleLoading] = useState(isSupabaseConfigured)
+  const [bookingSaving, setBookingSaving] = useState(false)
+  const [bookingError, setBookingError] = useState('')
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || days.length === 0) return
+    let active = true
+    const refreshSchedule = async () => {
+      setScheduleLoading(true)
+      try {
+        await Promise.all([
+          loadBookingCourts(),
+          loadPaymentQrCode(),
+          loadPublicSchedule(days[0].iso, days[days.length - 1].iso),
+        ])
+        if (active) setBookingError('')
+      } catch {
+        if (active) setBookingError('Could not load the latest schedule. Refresh the page and try again.')
+      } finally {
+        if (active) setScheduleLoading(false)
+      }
+    }
+    void refreshSchedule()
+    const interval = window.setInterval(refreshSchedule, 20_000)
+    window.addEventListener('focus', refreshSchedule)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshSchedule)
+    }
+  }, [days])
 
   useEffect(() => {
     const dialog = bookingDialog.current
@@ -83,6 +116,7 @@ export default function Booking() {
   }
 
   function toggleHour(court: (typeof bookingCourts)[number], hour: number) {
+    if (scheduleLoading) return
     const dayIso = activeDayData.iso
     const booked = isSlotBooked(dayIso, court.id, hour)
     const past = isSlotPast(dayIso, hour)
@@ -160,30 +194,28 @@ export default function Booking() {
     setStep('payment')
   }
 
-  function confirmBooking() {
-    const ref = reference || genReference()
+  async function confirmBooking() {
     const transactionReference = paymentTransactionReference.trim()
     if (!selectedSport || !transactionReference) return
-
-    currentSelections.forEach((s, index) => {
-      addBooking({
-        reference: ref,
-        paymentReference: index === 0 ? transactionReference : undefined,
-        courtId: s.courtId,
-        courtName: s.courtName,
-        sport: selectedSport,
-        dayIso: s.dayIso,
-        startHour: s.startHour,
-        endHour: s.endHour,
-        rate: s.rate,
+    setBookingSaving(true)
+    setBookingError('')
+    try {
+      const ref = await createCustomerBooking({
+        reference,
         name: form.name,
         mobile: form.mobile,
         email: form.email,
-        source: 'customer',
-        status: 'reserved',
+        sport: selectedSport,
+        paymentReference: transactionReference,
+        slots: currentSelections,
       })
-    })
-    setStep('confirmed')
+      setReference(ref)
+      setStep('confirmed')
+    } catch (error) {
+      setBookingError(error instanceof Error ? error.message : 'Could not submit the booking. Please try again.')
+    } finally {
+      setBookingSaving(false)
+    }
   }
 
   function startOver() {
@@ -361,6 +393,8 @@ export default function Booking() {
               <p className="px-4 pt-3 text-xs text-ink/50 sm:px-6">
                 Hours run from 8:00 AM to 12:00 AM. Tap available times to select a continuous block.
               </p>
+              {scheduleLoading && <p role="status" className="px-4 pt-2 text-xs font-medium text-court sm:px-6">Loading the latest availability…</p>}
+              {bookingError && <p role="alert" className="px-4 pt-2 text-xs font-medium text-tide sm:px-6">{bookingError}</p>}
               <div className="px-3 py-4 sm:px-4 md:hidden">
                 <div className="grid gap-3">
                   {bookingCourts.map((court) => {
@@ -382,6 +416,7 @@ export default function Booking() {
                               dayIso={activeDayData.iso}
                               selection={selection}
                               compact
+                              isLoading={scheduleLoading}
                               onToggle={toggleHour}
                             />
                           ))}
@@ -420,6 +455,7 @@ export default function Booking() {
                             hour={hour}
                             dayIso={activeDayData.iso}
                             selection={selection}
+                            isLoading={scheduleLoading}
                             onToggle={toggleHour}
                           />
                         ))}
@@ -566,10 +602,11 @@ export default function Booking() {
                 variant="primary"
                 className="w-full"
                 onClick={confirmBooking}
-                disabled={!paymentTransactionReference.trim()}
+                disabled={!paymentTransactionReference.trim() || bookingSaving}
               >
-                Submit booking for review
+                {bookingSaving ? 'Submitting…' : 'Submit booking for review'}
               </Button>
+              {bookingError && <p role="alert" className="text-center text-xs font-medium text-tide">{bookingError}</p>}
               <p className="text-center text-xs text-ink/45">
                 Your slot will be reserved while staff verifies the payment reference.
               </p>
@@ -656,6 +693,7 @@ function ScheduleSlotButton({
   dayIso,
   selection,
   compact = false,
+  isLoading = false,
   onToggle,
 }: {
   court: BookingCourt
@@ -663,6 +701,7 @@ function ScheduleSlotButton({
   dayIso: string
   selection?: Selection
   compact?: boolean
+  isLoading?: boolean
   onToggle: (court: BookingCourt, hour: number) => void
 }) {
   const booking = getBookingAt(dayIso, court.id, hour.hour)
@@ -677,7 +716,8 @@ function ScheduleSlotButton({
   let cls = compact
     ? 'flex min-h-11 min-w-0 flex-col items-center justify-center gap-0.5 rounded-md border px-0.5 text-[0.55rem] font-semibold leading-none transition-all '
     : 'flex h-9 min-w-0 items-center justify-center rounded-md border text-xs font-semibold transition-all '
-  if (past) cls += 'cursor-not-allowed border-ink/5 bg-sand-dim text-ink/25'
+  if (isLoading) cls += 'cursor-wait border-ink/5 bg-sand-dim text-ink/25'
+  else if (past) cls += 'cursor-not-allowed border-ink/5 bg-sand-dim text-ink/25'
   else if (booking && booking.status !== 'confirmed') cls += 'cursor-not-allowed border-citrus bg-citrus text-ink'
   else if (booking) cls += 'cursor-not-allowed border-tide bg-tide text-sand'
   else if (block) cls += 'cursor-not-allowed border-ink/50 bg-ink/50 text-sand'
@@ -701,6 +741,8 @@ function ScheduleSlotButton({
         : 'Reserved'
     : block
       ? 'blocked'
+    : isLoading
+      ? 'loading availability'
       : past
         ? 'past'
         : isSelected
@@ -710,7 +752,7 @@ function ScheduleSlotButton({
   return (
     <button
       type="button"
-      disabled={unavailable || past}
+      disabled={isLoading || unavailable || past}
       onClick={() => onToggle(court, hour.hour)}
       className={cls}
       aria-label={`${court.name}, ${hour.label}, ${status}`}

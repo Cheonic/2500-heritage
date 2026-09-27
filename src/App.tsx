@@ -14,6 +14,9 @@ import Contact from './components/sections/Contact'
 import Container from './components/ui/Container'
 import AdminPage from './pages/AdminPage'
 import MyBookingsPage from './pages/MyBookingsPage'
+import { loadBookingCourts } from './data/booking'
+import { loadPaymentQrCode } from './data/paymentQr'
+import { isSupabaseConfigured } from './data/supabase'
 
 /**
  * Jumps to the top of the page whenever the route changes (e.g. Home -> Book Now).
@@ -74,6 +77,13 @@ function BookingPage() {
 }
 
 function App() {
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+    void Promise.all([loadBookingCourts(), loadPaymentQrCode()]).catch(() => {
+      // The booking and admin screens surface their own errors when remote data is needed.
+    })
+  }, [])
+
   return (
     <div className="min-h-screen bg-sand">
       <a
