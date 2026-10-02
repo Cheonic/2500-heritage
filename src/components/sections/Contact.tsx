@@ -10,7 +10,6 @@ export default function Contact() {
             P.Burgos St. Brgy 1 San Fernando City, La Union, Philippines
           </ContactCard>
           
-          
         </div>
 
         <div className="overflow-hidden rounded-card border border-ink/10 shadow-xl shadow-ink/10">
