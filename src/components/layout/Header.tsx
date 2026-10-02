@@ -31,7 +31,7 @@ export default function Header() {
       <header className="sticky top-0 z-50 border-b border-sand/10 bg-ink">
         <div className="mx-auto flex w-full max-w-7xl items-center px-5 py-3 sm:px-8">
           <Link to="/" aria-label="2500 Heritage, home">
-            <Logo />
+            <Logo variant="full" />
           </Link>
         </div>
       </header>
@@ -46,7 +46,7 @@ export default function Header() {
     >
       <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3 px-5 py-3 sm:gap-5 sm:px-8">
         <Link to="/" onClick={() => setIsOpen(false)} aria-label="2500 Heritage, home">
-          <Logo />
+          <Logo variant="full" />
         </Link>
 
         <nav className="hidden items-center gap-0.5 xl:flex xl:gap-1" aria-label="Primary">

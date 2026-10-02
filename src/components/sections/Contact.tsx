@@ -7,14 +7,10 @@ export default function Contact() {
       <Container className="flex flex-col gap-5">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <ContactCard icon={<IconPin />} title="Find us">
-            1 Lucero St, cor. P. Burgos St, San Fernando City, La Union
+            P.Burgos St. Brgy 1 San Fernando City, La Union, Philippines
           </ContactCard>
-          <ContactCard icon={<IconClock />} title="Status">
-            Under transformation — opening soon
-          </ContactCard>
-          <ContactCard icon={<IconPhone />} title="Follow along">
-            Construction updates shared on our social pages
-          </ContactCard>
+          
+          
         </div>
 
         <div className="overflow-hidden rounded-card border border-ink/10 shadow-xl shadow-ink/10">

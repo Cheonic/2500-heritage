@@ -1,5 +1,28 @@
 import Container from '../ui/Container'
 import Button from '../ui/Button'
+import SocialIcon from '../ui/SocialIcon'
+import { socialLinks } from '../../data/social'
+
+function SocialLinks({ className = '' }: { className?: string }) {
+  return (
+    <ul className={`flex items-center gap-2.5 ${className}`} aria-label="Social media">
+      {socialLinks.map((s) => (
+        <li key={s.platform}>
+          <a
+            href={s.href}
+            target="_blank"
+            rel="noreferrer noopener"
+            aria-label={s.label}
+            title={s.label}
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-sand/30 bg-ink/65 text-sand backdrop-blur-sm transition-colors duration-200 hover:border-citrus hover:text-citrus"
+          >
+            <SocialIcon platform={s.platform} className="h-[18px] w-[18px]" />
+          </a>
+        </li>
+      ))}
+    </ul>
+  )
+}
 
 const bannerAlt =
   '2500 Heritage banner with the San Fernando rice mill, the 2500 Heritage logo, and a message about sports and community.'
@@ -16,6 +39,7 @@ export default function Hero() {
           className="block h-auto w-full opacity-70"
         />
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-ink/10" />
+        <SocialLinks className="absolute left-[4.6%] top-[37%] z-10" />
         <div className="absolute bottom-[27%] left-1/2 z-10 -translate-x-1/2">
           <div className="flex items-center gap-3">
             <Button
@@ -72,6 +96,7 @@ export default function Hero() {
               My Bookings
             </Button>
           </div>
+          <SocialLinks />
         </Container>
       </div>
     </section>

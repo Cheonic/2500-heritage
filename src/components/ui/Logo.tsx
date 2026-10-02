@@ -1,11 +1,15 @@
 import logoIcon from '../../assets/logo-icon.png'
+import logoFull from '../../assets/logo-full.png'
 
 interface LogoProps {
   tone?: 'dark' | 'light'
+  variant?: 'icon' | 'full'
   className?: string
 }
 
-export default function Logo({ tone = 'light', className = '' }: LogoProps) {
+export default function Logo({ tone = 'light', variant = 'icon', className = '' }: LogoProps) {
+  const isFull = variant === 'full'
+
   return (
     <span className={`inline-flex items-center ${className}`}>
       <span
@@ -14,9 +18,9 @@ export default function Logo({ tone = 'light', className = '' }: LogoProps) {
         }`}
       >
         <img
-          src={logoIcon}
+          src={isFull ? logoFull : logoIcon}
           alt="2500 Heritage"
-          className="h-9 w-auto sm:h-10"
+          className={isFull ? 'h-12 w-auto sm:h-14' : 'h-9 w-auto sm:h-10'}
         />
       </span>
     </span>

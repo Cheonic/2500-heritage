@@ -1,15 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { navLinks } from '../../data/nav'
+import { socialLinks } from '../../data/social'
 import { signInAdmin } from '../../data/adminAuth'
 import Logo from '../ui/Logo'
 import Container from '../ui/Container'
 import Button from '../ui/Button'
-
-const social = [
-  { label: 'Facebook', href: 'https://www.facebook.com/profile.php?id=61594366808151#' },
-  { label: 'TikTok', href: 'https://www.tiktok.com/@2500.heritage?_r=1&_t=ZS-9A3LQJKsNpl' },
-]
 
 export default function Footer() {
   const location = useLocation()
@@ -99,24 +95,12 @@ export default function Footer() {
             </ul>
           </div>
 
-          <div>
-            <h3 className="text-sm font-semibold text-sand">Status</h3>
-            <ul className="mt-4 flex flex-col gap-2 text-sm text-sand/65">
-              <li className="flex justify-between gap-6">
-                <span>Now</span>
-                <span>Under transformation</span>
-              </li>
-              <li className="flex justify-between gap-6">
-                <span>Opening</span>
-                <span>Coming soon</span>
-              </li>
-            </ul>
-          </div>
+          
 
           <div>
             <h3 className="text-sm font-semibold text-sand">Follow along</h3>
             <ul className="mt-4 flex flex-col gap-3">
-              {social.map((s) => (
+              {socialLinks.map((s) => (
                 <li key={s.label}>
                   <a
                     href={s.href}
@@ -133,7 +117,7 @@ export default function Footer() {
         </div>
 
         <div className="flex flex-col items-center justify-between gap-3 pt-8 text-xs text-sand/50 sm:flex-row">
-          <p>&copy; {new Date().getFullYear()} 2500 Heritage. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} SysTech Solutions. All rights reserved.</p>
           <p>San Fernando City, La Union</p>
         </div>
       </Container>
