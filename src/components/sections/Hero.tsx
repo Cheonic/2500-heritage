@@ -31,7 +31,7 @@ export default function Hero() {
   return (
     <section id="home" className="overflow-hidden bg-ink">
       {/* Keep the full artwork intact on larger screens and gently soften it. */}
-      <div className="relative hidden bg-ink lg:block">
+      <div className="relative hidden bg-ink xl:block">
         <img
           src="/heritage-hero.png"
           alt={bannerAlt}
@@ -39,7 +39,7 @@ export default function Hero() {
           className="block h-auto w-full opacity-70"
         />
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-ink/10" />
-        <SocialLinks className="absolute left-[4.6%] top-[37%] z-10" />
+        <SocialLinks className="absolute left-[4.6%] top-[37%] z-10 !flex-col" />
         <div className="absolute bottom-[27%] left-1/2 z-10 -translate-x-1/2">
           <div className="flex items-center gap-3">
             <Button
@@ -49,9 +49,6 @@ export default function Hero() {
             >
               Reserve a Court
             </Button>
-            <Button href="#open-play" variant="secondary" className="!bg-ink/65 !backdrop-blur-sm">
-              Open Play
-            </Button>
             <Button href="/my-bookings" variant="secondary" className="!bg-ink/65 !backdrop-blur-sm">
               My Bookings
             </Button>
@@ -59,8 +56,8 @@ export default function Hero() {
         </div>
       </div>
 
-      {/* On phones, keep the banner's natural proportions so the whole image scales to the screen. */}
-      <div className="relative bg-ink lg:hidden">
+      {/* On phones and tablets (below 1280px), keep the banner's natural proportions so the whole image scales to the screen. */}
+      <div className="relative bg-ink xl:hidden">
         <div className="relative">
           <img
             src="/heritage-hero.png"
@@ -85,17 +82,14 @@ export default function Hero() {
           <p className="max-w-sm text-sm leading-6 text-sand/75">
             A new home for pickleball, badminton, and taekwondo in San Fernando City.
           </p>
-          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-center sm:gap-3">
-            <Button href="/booking" variant="primary" className="col-span-2 w-full !min-h-12 !px-5 !text-sm sm:col-span-1 sm:w-auto sm:!px-8">
-              Reserve a Court
-            </Button>
-            <Button href="#open-play" variant="secondary" className="w-full !bg-ink/65 !px-3 !text-xs !backdrop-blur-sm sm:w-auto sm:!px-6 sm:!text-sm">
-              Open Play
-            </Button>
-            <Button href="/my-bookings" variant="secondary" className="w-full !bg-ink/65 !px-3 !text-xs !backdrop-blur-sm sm:w-auto sm:!px-6 sm:!text-sm">
-              My Bookings
-            </Button>
-          </div>
+          <div className="flex w-full flex-col items-center gap-2 sm:flex-row sm:flex-wrap sm:justify-center sm:gap-3">
+  <Button href="/booking" variant="primary" className="w-full !min-h-12 !px-5 !text-sm sm:w-auto sm:!px-8">
+    Reserve a Court
+  </Button>
+  <Button href="/my-bookings" variant="secondary" className="!bg-ink/65 !px-8 !text-xs !backdrop-blur-sm sm:!px-6 sm:!text-sm">
+    My Bookings
+  </Button>
+</div>
           <SocialLinks />
         </Container>
       </div>

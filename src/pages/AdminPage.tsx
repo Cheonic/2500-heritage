@@ -16,10 +16,15 @@ import {
   loadAdminStore,
   findOverlappingBooking,
   findOverlappingBlock,
+  genReference,
   useBookingStoreVersion,
   type StoredBooking,
 } from '../data/store'
-import { isAdminUnlocked, signInAdmin, lockAdmin } from '../data/adminAuth'
+import { sports } from '../data/sports'
+import { isAdminUnlocked, signInAdmin } from '../data/adminAuth'
+import PasswordInput from '../components/ui/PasswordInput'
+import GalleryAdmin from '../components/admin/GalleryAdmin'
+import { loadGalleryImages } from '../data/galleryImages'
 import { getPaymentQrCode, loadPaymentQrCode, savePaymentQrCode } from '../data/paymentQr'
 import { isSupabaseConfigured, requireSupabase } from '../data/supabase'
 
@@ -56,13 +61,14 @@ function resizePaymentQr(file: File): Promise<string> {
   })
 }
 
-type AdminSectionId = 'bookings' | 'payments' | 'courts' | 'payment-qr'
+type AdminSectionId = 'bookings' | 'payments' | 'courts' | 'payment-qr' | 'gallery'
 
 const adminSections: { id: AdminSectionId; label: string }[] = [
   { id: 'bookings', label: 'Bookings calendar' },
   { id: 'payments', label: 'Payment review' },
   { id: 'courts', label: 'Courts & pricing' },
   { id: 'payment-qr', label: 'Payment QR setup' },
+  { id: 'gallery', label: 'Gallery photos' },
 ]
 
 export default function AdminPage() {
@@ -87,7 +93,7 @@ export default function AdminPage() {
   }
   if (access === 'locked') return <AdminLogin onUnlock={() => setAccess('unlocked')} />
 
-  return <AdminDashboard onLock={() => { void lockAdmin().catch(() => undefined).finally(() => setAccess('locked')) }} />
+  return <AdminDashboard />
 }
 
 function AdminLogin({ onUnlock }: { onUnlock: () => void }) {
@@ -126,8 +132,7 @@ function AdminLogin({ onUnlock }: { onUnlock: () => void }) {
           placeholder="Email address"
           className="mt-5 w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
         />
-        <input
-          type="password"
+        <PasswordInput
           required
           autoComplete="current-password"
           value={password}
@@ -136,7 +141,7 @@ function AdminLogin({ onUnlock }: { onUnlock: () => void }) {
             setError('')
           }}
           placeholder="Password"
-          className="mt-5 w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+          wrapperClassName="mt-5"
         />
         {error && <p role="alert" className="mt-2 text-xs font-medium text-tide">{error}</p>}
         <Button type="submit" variant="primary" className="mt-5 w-full">
@@ -147,7 +152,7 @@ function AdminLogin({ onUnlock }: { onUnlock: () => void }) {
   )
 }
 
-function AdminDashboard({ onLock }: { onLock: () => void }) {
+function AdminDashboard() {
   const storeVersion = useBookingStoreVersion() // re-render on any booking/block change
   const [adminStoreError, setAdminStoreError] = useState('')
   const [adminStoreLoading, setAdminStoreLoading] = useState(isSupabaseConfigured)
@@ -172,7 +177,8 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
   const [activeDay, setActiveDay] = useState<DayOption>(days[0])
   const activeDayData = days.find((d) => d.iso === activeDay.iso) ?? days[0]
 
-  const [selection, setSelection] = useState<Range | null>(null)
+  // One range per court, so staff can pick several courts for the same booking.
+  const [selections, setSelections] = useState<Range[]>([])
   const [assignFormOpen, setAssignFormOpen] = useState(false)
   const [editingBooking, setEditingBooking] = useState<StoredBooking | null>(null)
   const [viewingBlockId, setViewingBlockId] = useState<string | null>(null)
@@ -234,7 +240,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
           if (active) setAdminStoreError(error instanceof Error ? error.message : 'Could not refresh booking data.')
         })
     }
-    Promise.all([loadAdminStore(), loadBookingCourts(), loadPaymentQrCode()])
+    Promise.all([loadAdminStore(), loadBookingCourts(), loadPaymentQrCode(), loadGalleryImages()])
       .then(() => {
         if (!active) return
         setCourtDraft(bookingCourts.map((court) => ({ ...court })))
@@ -353,13 +359,13 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
 
   function switchDay(d: DayOption) {
     setActiveDay(d)
-    setSelection(null)
+    setSelections([])
     setAssignFormOpen(false)
   }
 
   function navigateTo(section: AdminSectionId) {
     setActiveSection(section)
-    setSelection(null)
+    setSelections([])
     setAssignFormOpen(false)
   }
 
@@ -371,94 +377,104 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
     const booking = getBookingAt(dayIso, courtId, hour)
     if (booking) {
       setEditingBooking(booking)
-      setSelection(null)
+      setSelections([])
       return
     }
 
     const block = getBlockAt(dayIso, courtId, hour)
     if (block) {
       setViewingBlockId(block.id)
-      setSelection(null)
+      setSelections([])
       return
     }
 
     // Free slot: build/extend a selection range the same way the public
     // calendar does, so staff can drag out a multi-hour block or booking.
     setAssignFormOpen(false)
-    setSelection((prev) => {
-      if (!prev || prev.courtId !== courtId) {
-        return { courtId, startHour: hour, endHour: hour + 1 }
+    setSelections((prev) => {
+      const existing = prev.find((item) => item.courtId === courtId)
+      if (!existing) return [...prev, { courtId, startHour: hour, endHour: hour + 1 }]
+      const replaceWith = (next: Range | null) =>
+        next ? prev.map((item) => (item === existing ? next : item)) : prev.filter((item) => item !== existing)
+
+      if (hour >= existing.startHour && hour < existing.endHour) {
+        if (hour === existing.startHour && hour === existing.endHour - 1) return replaceWith(null)
+        if (hour === existing.startHour) return replaceWith({ ...existing, startHour: hour + 1 })
+        if (hour === existing.endHour - 1) return replaceWith({ ...existing, endHour: hour })
+        return replaceWith({ ...existing, startHour: hour, endHour: hour + 1 })
       }
-      if (hour >= prev.startHour && hour < prev.endHour) {
-        if (hour === prev.startHour && hour === prev.endHour - 1) return null
-        if (hour === prev.startHour) return { ...prev, startHour: hour + 1 }
-        if (hour === prev.endHour - 1) return { ...prev, endHour: hour }
-        return { ...prev, startHour: hour, endHour: hour + 1 }
-      }
-      if (hour === prev.endHour) return { ...prev, endHour: hour + 1 }
-      if (hour === prev.startHour - 1) return { ...prev, startHour: hour }
-      return { ...prev, startHour: hour, endHour: hour + 1 }
+      if (hour === existing.endHour) return replaceWith({ ...existing, endHour: hour + 1 })
+      if (hour === existing.startHour - 1) return replaceWith({ ...existing, startHour: hour })
+      return replaceWith({ ...existing, startHour: hour, endHour: hour + 1 })
     })
   }
 
   async function blockSelection(reason: string) {
-    if (!selection) return
+    if (selections.length === 0) return
     setSelectionError('')
+    const remaining = [...selections]
     try {
-      await addBlockedSlot({
-        courtId: selection.courtId,
-        dayIso: activeDayData.iso,
-        startHour: selection.startHour,
-        endHour: selection.endHour,
-        reason: reason.trim() || undefined,
-      })
-      setSelection(null)
+      for (const item of selections) {
+        await addBlockedSlot({
+          courtId: item.courtId,
+          dayIso: activeDayData.iso,
+          startHour: item.startHour,
+          endHour: item.endHour,
+          reason: reason.trim() || undefined,
+        })
+        remaining.shift()
+      }
+      setSelections([])
     } catch (error) {
+      setSelections(remaining)
       setSelectionError(error instanceof Error ? error.message : 'Could not block this time.')
     }
   }
 
   async function assignReclubSelection() {
-    if (!selection) return
-    const clash =
-      findOverlappingBooking(
-        activeDayData.iso,
-        selection.courtId,
-        selection.startHour,
-        selection.endHour,
-      ) ||
-      findOverlappingBlock(
-        activeDayData.iso,
-        selection.courtId,
-        selection.startHour,
-        selection.endHour,
-      )
+    if (selections.length === 0) return
+    const clash = selections.some((item) =>
+      findOverlappingBooking(activeDayData.iso, item.courtId, item.startHour, item.endHour) ||
+      findOverlappingBlock(activeDayData.iso, item.courtId, item.startHour, item.endHour),
+    )
     if (clash) {
-      setSelectionError('That time is no longer available. Refresh the schedule and try again.')
+      setSelectionError('One of the selected times is no longer available. Refresh the schedule and try again.')
       return
     }
 
-    const court = bookingCourts.find((item) => item.id === selection.courtId)
     setSelectionError('')
+    const reference = selections.length > 1 ? genReference() : undefined
+    const remaining = [...selections]
     try {
-      await addBooking({
-        courtId: selection.courtId,
-        courtName: court?.name ?? selection.courtId,
-        dayIso: activeDayData.iso,
-        startHour: selection.startHour,
-        endHour: selection.endHour,
-        rate: court?.rate ?? 0,
-        name: 'Reclub',
-        mobile: '',
-        notes: 'Assigned from Reclub',
-        source: 'reclub',
-        status: 'confirmed',
-      })
-      setSelection(null)
+      for (const item of selections) {
+        const court = bookingCourts.find((c) => c.id === item.courtId)
+        await addBooking({
+          courtId: item.courtId,
+          courtName: court?.name ?? item.courtId,
+          dayIso: activeDayData.iso,
+          startHour: item.startHour,
+          endHour: item.endHour,
+          rate: court?.rate ?? 0,
+          name: 'Reclub',
+          mobile: '',
+          notes: 'Assigned from Reclub',
+          source: 'reclub',
+          status: 'confirmed',
+          reference,
+        })
+        remaining.shift()
+      }
+      setSelections([])
     } catch (error) {
+      setSelections(remaining)
       setSelectionError(error instanceof Error ? error.message : 'Could not assign this Reclub booking.')
     }
   }
+
+  const orderedSelections = [...selections].sort(
+    (a, b) =>
+      bookingCourts.findIndex((c) => c.id === a.courtId) - bookingCourts.findIndex((c) => c.id === b.courtId),
+  )
 
   return (
     <Container className="py-8 sm:py-10">
@@ -468,16 +484,13 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
           <h1 className="mt-1 font-display text-2xl font-semibold text-ink sm:text-3xl">Admin dashboard</h1>
           <p className="mt-2 max-w-2xl text-sm text-ink/60">Manage bookings, payment reviews, and court settings.</p>
         </div>
-        <Button variant="secondary" className="!border-ink/15 !bg-sand !text-ink hover:!bg-sand-dim shrink-0 self-start" onClick={onLock}>
-          Lock admin
-        </Button>
       </div>
 
       {adminStoreLoading && <p role="status" className="mt-4 text-sm text-ink/60">Loading shared booking data…</p>}
       {adminStoreError && <p role="alert" className="mt-4 rounded-xl bg-tide/10 px-4 py-3 text-sm text-tide">Could not load Supabase data: {adminStoreError}</p>}
 
-      <div className="mt-7 grid min-w-0 gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
-        <aside className="h-fit rounded-card border border-ink/10 bg-sand p-3 shadow-xl shadow-ink/5 sm:p-4 lg:sticky lg:top-24">
+      <div className="mt-7 grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
+        <aside className="h-fit min-w-0 rounded-card border border-ink/10 bg-sand p-3 shadow-xl shadow-ink/5 sm:p-4 lg:sticky lg:top-24">
           <p className="px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-ink/45">Navigation</p>
           <nav aria-label="Admin sections" className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible">
             {adminSections.map((section) => {
@@ -517,7 +530,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
           </div>
           <Button type="submit" variant="primary" className="mt-3 self-start sm:mt-0">Save changes</Button>
         </div>
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {courtDraft.map((court) => (
             <div key={court.id} className="grid grid-cols-[minmax(0,1fr)_120px] items-end gap-3 rounded-xl border border-ink/10 bg-white p-3">
               <Field label={`Court ${court.id} name`}>
@@ -561,7 +574,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
           <p className="mt-1 text-sm text-ink/60">Upload the GCash or Maya QR shown to customers in the payment step.</p>
         </div>
 
-        <div className="mt-5 grid gap-5 md:grid-cols-[minmax(0,1fr)_220px]">
+        <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,1fr)_220px]">
           <div>
             <Field label="Upload QR image">
               <input
@@ -612,6 +625,8 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
       </section>
       )}
 
+      {activeSection === 'gallery' && <GalleryAdmin />}
+
       {activeSection === 'payments' && (
       <section className="rounded-card border border-ink/10 bg-sand p-5 shadow-xl shadow-ink/5 sm:p-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -630,7 +645,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
             No reservations are waiting for payment verification.
           </p>
         ) : (
-          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
             {reservedGroups.map(({ reference, bookings }) => {
               const customer = bookings[0]
               const paymentReference = bookings.find((booking) => booking.paymentReference)?.paymentReference
@@ -770,7 +785,7 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
           <LegendSwatch className="border border-ink/10 bg-sand-dim" label="Past" />
         </div>
 
-        <p className="px-4 pt-3 text-xs text-ink/50 sm:px-6">Scroll horizontally to see all time slots â†’</p>
+        <p className="px-4 pt-3 text-xs text-ink/50 sm:px-6">Scroll horizontally to see all time slots →</p>
         <div className="overflow-x-auto overscroll-x-contain">
           <div className="min-w-[720px] px-4 py-4 sm:px-6">
             <div
@@ -795,11 +810,12 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
                     const past = isSlotPast(dayIso, h.hour)
                     const booking = getBookingAt(dayIso, court.id, h.hour)
                     const block = getBlockAt(dayIso, court.id, h.hour)
-                    const isSelecting =
-                      !!selection &&
-                      selection.courtId === court.id &&
-                      h.hour >= selection.startHour &&
-                      h.hour < selection.endHour
+                    const isSelecting = selections.some(
+                      (item) =>
+                        item.courtId === court.id &&
+                        h.hour >= item.startHour &&
+                        h.hour < item.endHour,
+                    )
 
                     let cls =
                       'flex h-11 items-center justify-center rounded-lg border text-[0.65rem] font-semibold transition-all sm:h-12 '
@@ -855,30 +871,32 @@ function AdminDashboard({ onLock }: { onLock: () => void }) {
       </>
       )}
 
-      {activeSection === 'bookings' && selection && !assignFormOpen && (
+      {activeSection === 'bookings' && selections.length > 0 && !assignFormOpen && (
         <>
         {selectionError && <p role="alert" className="rounded-xl bg-tide/10 px-4 py-3 text-sm text-tide">{selectionError}</p>}
         <SelectionActionBar
-          courtName={bookingCourts.find((c) => c.id === selection.courtId)?.name ?? ''}
-          startHour={selection.startHour}
-          endHour={selection.endHour}
+          items={orderedSelections.map((item) => ({
+            courtName: bookingCourts.find((c) => c.id === item.courtId)?.name ?? item.courtId,
+            startHour: item.startHour,
+            endHour: item.endHour,
+          }))}
           onBlock={blockSelection}
           onAssign={() => setAssignFormOpen(true)}
           onAssignReclub={assignReclubSelection}
-          onClear={() => setSelection(null)}
+          onClear={() => setSelections([])}
         />
         </>
       )}
 
-      {activeSection === 'bookings' && selection && assignFormOpen && (
+      {activeSection === 'bookings' && selections.length > 0 && assignFormOpen && (
         <AssignForm
           dayIso={activeDayData.iso}
           dayLabel={formatFullDate(activeDayData.date)}
-          selection={selection}
+          selections={orderedSelections}
           onCancel={() => setAssignFormOpen(false)}
           onSaved={() => {
             setAssignFormOpen(false)
-            setSelection(null)
+            setSelections([])
           }}
         />
       )}
@@ -911,17 +929,13 @@ function rangeLabel(startHour: number, endHour: number) {
 }
 
 function SelectionActionBar({
-  courtName,
-  startHour,
-  endHour,
+  items,
   onBlock,
   onAssign,
   onAssignReclub,
   onClear,
 }: {
-  courtName: string
-  startHour: number
-  endHour: number
+  items: { courtName: string; startHour: number; endHour: number }[]
   onBlock: (reason: string) => void
   onAssign: () => void
   onAssignReclub: () => void
@@ -932,10 +946,15 @@ function SelectionActionBar({
   return (
     <div className="flex flex-col gap-3 rounded-card border border-ink/10 bg-sand-dim p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
       <div>
-        <p className="text-sm font-semibold text-ink">
-          {courtName} · {rangeLabel(startHour, endHour)}
+        {items.map((item) => (
+          <p key={item.courtName} className="text-sm font-semibold text-ink">
+            {item.courtName} · {rangeLabel(item.startHour, item.endHour)}
+          </p>
+        ))}
+        <p className="text-xs text-ink/55">
+          {items.length} {items.length === 1 ? 'court' : 'courts'} ·{' '}
+          {items.reduce((sum, item) => sum + (item.endHour - item.startHour), 0)} hour(s) selected
         </p>
-        <p className="text-xs text-ink/55">{endHour - startHour} hour(s) selected</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <input
@@ -966,78 +985,219 @@ function SelectionActionBar({
   )
 }
 
+type RepeatMode = 'none' | 'daily' | 'weekly'
+
+interface SlotPair {
+  date: string
+  sel: Range
+}
+
+const MAX_REPEAT_COUNT = 12
+
+function isoFromDate(d: Date) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function buildOccurrenceDates(startIso: string, mode: RepeatMode, count: number) {
+  if (mode === 'none') return [startIso]
+  const stepDays = mode === 'weekly' ? 7 : 1
+  const base = new Date(`${startIso}T00:00:00`)
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(base)
+    d.setDate(d.getDate() + i * stepDays)
+    return isoFromDate(d)
+  })
+}
+
+function shortDateLabel(iso: string) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
 function AssignForm({
   dayIso,
   dayLabel,
-  selection,
+  selections,
   onCancel,
   onSaved,
 }: {
   dayIso: string
   dayLabel: string
-  selection: Range
+  selections: Range[]
   onCancel: () => void
   onSaved: () => void
 }) {
-  const court = bookingCourts.find((c) => c.id === selection.courtId)
+  const [sport, setSport] = useState('')
   const [name, setName] = useState('')
   const [mobile, setMobile] = useState('')
   const [email, setEmail] = useState('')
   const [notes, setNotes] = useState('')
+  const [repeat, setRepeat] = useState<RepeatMode>('none')
+  const [repeatCount, setRepeatCount] = useState(4)
+  const [conflicts, setConflicts] = useState<SlotPair[] | null>(null)
+  const [partialFailure, setPartialFailure] = useState(false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
-  async function save() {
+  const weekdayName = new Date(`${dayIso}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long' })
+  const occurrenceDates = buildOccurrenceDates(dayIso, repeat, repeatCount)
+  const lastDate = occurrenceDates[occurrenceDates.length - 1]
+
+  function resetConflictPrompt() {
+    setConflicts(null)
+    setError('')
+  }
+
+  function courtNameOf(courtId: string) {
+    return bookingCourts.find((c) => c.id === courtId)?.name ?? courtId
+  }
+
+  function pairLabel(pair: SlotPair) {
+    return repeat === 'none'
+      ? courtNameOf(pair.sel.courtId)
+      : `${courtNameOf(pair.sel.courtId)} ${shortDateLabel(pair.date)}`
+  }
+
+  function hasClash({ date, sel }: SlotPair) {
+    return !!(
+      findOverlappingBooking(date, sel.courtId, sel.startHour, sel.endHour) ||
+      findOverlappingBlock(date, sel.courtId, sel.startHour, sel.endHour)
+    )
+  }
+
+  // Every (date, court) combination in this booking.
+  const allPairs: SlotPair[] = occurrenceDates.flatMap((date) => selections.map((sel) => ({ date, sel })))
+  const candidatePairs = allPairs.filter((pair) => !isSlotPast(pair.date, pair.sel.startHour))
+
+  async function save(skipConflicts = false) {
+    if (!sport) {
+      setError('Choose a sport for this booking.')
+      return
+    }
     if (!name.trim() || !mobile.trim()) {
       setError('Name and mobile number are required.')
       return
     }
-    const clash =
-      findOverlappingBooking(dayIso, selection.courtId, selection.startHour, selection.endHour) ||
-      findOverlappingBlock(dayIso, selection.courtId, selection.startHour, selection.endHour)
-    if (clash) {
-      setError('That time was just taken — pick another slot.')
+
+    // Past slots can never be booked, so they are always left out of a series.
+    if (candidatePairs.length === 0) {
+      setError('All of these dates are already in the past.')
       return
     }
+
+    const clashing = candidatePairs.filter(hasClash)
+    if (clashing.length > 0 && !skipConflicts) {
+      if (repeat === 'none') {
+        setError('One of the selected courts was just taken — pick another slot.')
+      } else {
+        setError('')
+        setConflicts(clashing)
+      }
+      return
+    }
+
+    const pairsToBook = candidatePairs.filter((pair) => !clashing.includes(pair))
+    if (pairsToBook.length === 0) {
+      setConflicts(null)
+      setError('Every one of these slots is already taken — pick another slot.')
+      return
+    }
+
     setSaving(true)
     setError('')
+    setConflicts(null)
+    const reference = pairsToBook.length > 1 ? genReference() : undefined
+    let savedCount = 0
     try {
-      await addBooking({
-        courtId: selection.courtId,
-        courtName: court?.name ?? selection.courtId,
-        dayIso,
-        startHour: selection.startHour,
-        endHour: selection.endHour,
-        rate: court?.rate ?? 0,
-        name: name.trim(),
-        mobile: mobile.trim(),
-        email: email.trim() || undefined,
-        notes: notes.trim() || undefined,
-        source: 'admin',
-        status: 'confirmed',
-      })
+      for (const { date, sel } of pairsToBook) {
+        await addBooking({
+          courtId: sel.courtId,
+          courtName: courtNameOf(sel.courtId),
+          dayIso: date,
+          startHour: sel.startHour,
+          endHour: sel.endHour,
+          rate: bookingCourts.find((c) => c.id === sel.courtId)?.rate ?? 0,
+          sport,
+          name: name.trim(),
+          mobile: mobile.trim(),
+          email: email.trim() || undefined,
+          notes: notes.trim() || undefined,
+          source: 'admin',
+          status: 'confirmed',
+          reference,
+        })
+        savedCount += 1
+      }
       onSaved()
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Could not save this booking.')
+      const message = saveError instanceof Error ? saveError.message : 'Could not save this booking.'
+      if (savedCount > 0) {
+        setPartialFailure(true)
+        setError(
+          `Saved ${savedCount} of ${pairsToBook.length} bookings, then stopped at ${pairLabel(pairsToBook[savedCount])}: ${message} Close this form and check the calendar before trying again.`,
+        )
+      } else {
+        setError(message)
+      }
     } finally {
       setSaving(false)
     }
   }
 
+  const inputClass =
+    'w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-base text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15 sm:text-sm'
+
+  const bookableCount = conflicts ? candidatePairs.length - conflicts.length : 0
+
   return (
-    <div className="mx-auto w-full max-w-md rounded-card border border-ink/10 bg-sand p-6 shadow-xl shadow-ink/5 sm:p-8">
-      <h3 className="font-display text-lg font-semibold text-ink">Assign a booking</h3>
-      <p className="mt-1 text-sm text-ink/60">
-        {court?.name} · {dayLabel} · {rangeLabel(selection.startHour, selection.endHour)}
+    <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-ink/50 p-4 sm:items-center">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="assign-booking-title"
+      className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-card border border-ink/10 bg-sand p-5 shadow-xl shadow-ink/10 sm:p-8"
+    >
+      <div className="grid grid-cols-[minmax(0,1fr)_2rem] items-start gap-2">
+        <h3 id="assign-booking-title" className="font-display text-lg font-semibold text-ink">Assign a booking</h3>
+        <ModalCloseButton onClose={onCancel} />
+      </div>
+      <p className="mt-1 text-sm font-semibold text-ink/70">
+        {dayLabel}
       </p>
+      <div className="mt-1 text-sm text-ink/60">
+        {selections.map((item) => (
+          <p key={item.courtId}>
+            {courtNameOf(item.courtId)} · {rangeLabel(item.startHour, item.endHour)}
+          </p>
+        ))}
+      </div>
 
       <div className="mt-5 flex flex-col gap-4">
+        <Field label="Sport">
+          <select
+            value={sport}
+            onChange={(e) => {
+              setSport(e.target.value)
+              setError('')
+            }}
+            className={inputClass}
+          >
+            <option value="">Select a sport</option>
+            {sports.map((item) => (
+              <option key={item.id} value={item.name}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </Field>
         <Field label="Full name">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Juan Dela Cruz"
-            className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+            className={inputClass}
           />
         </Field>
         <Field label="Mobile number">
@@ -1045,7 +1205,7 @@ function AssignForm({
             value={mobile}
             onChange={(e) => setMobile(e.target.value)}
             placeholder="09XX XXX XXXX"
-            className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+            className={inputClass}
           />
         </Field>
         <Field label="Email (optional)">
@@ -1053,7 +1213,7 @@ function AssignForm({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="juan@email.com"
-            className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+            className={inputClass}
           />
         </Field>
         <Field label="Notes (optional)">
@@ -1061,21 +1221,91 @@ function AssignForm({
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Walk-in, paid cash, etc."
-            className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+            className={inputClass}
           />
         </Field>
+
+        <Field label="Repeat">
+          <select
+            value={repeat}
+            onChange={(e) => {
+              setRepeat(e.target.value as RepeatMode)
+              resetConflictPrompt()
+            }}
+            className={inputClass}
+          >
+            <option value="none">Does not repeat</option>
+            <option value="weekly">Weekly (every {weekdayName})</option>
+            <option value="daily">Daily</option>
+          </select>
+        </Field>
+
+        {repeat !== 'none' && (
+          <Field label={`Number of ${repeat === 'weekly' ? 'weeks' : 'days'} (including this one)`}>
+            <select
+              value={repeatCount}
+              onChange={(e) => {
+                setRepeatCount(Number(e.target.value))
+                resetConflictPrompt()
+              }}
+              className={inputClass}
+            >
+              {Array.from({ length: MAX_REPEAT_COUNT - 1 }, (_, i) => i + 2).map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-xs text-ink/55">
+              {occurrenceDates.length} bookings · {shortDateLabel(dayIso)} to {shortDateLabel(lastDate)}
+            </p>
+          </Field>
+        )}
       </div>
+
+      {conflicts && (
+        <div role="alert" className="mt-4 rounded-xl bg-tide/10 px-4 py-3 text-sm text-tide">
+          <p className="font-semibold">
+            {conflicts.length} {conflicts.length === 1 ? 'slot is' : 'slots are'} already taken:
+          </p>
+          <p className="mt-1 text-xs">{conflicts.map(pairLabel).join(' · ')}</p>
+          <div className="mt-3 flex gap-2">
+            <Button
+              variant="primary"
+              className="!flex-1 !px-3 !text-xs"
+              onClick={() => save(true)}
+              disabled={saving || bookableCount <= 0}
+            >
+              {bookableCount > 0 ? `Skip them, book ${bookableCount}` : 'Nothing left to book'}
+            </Button>
+            <Button
+              variant="secondary"
+              className="!flex-1 !px-3 !text-xs !text-ink !border-ink/20"
+              onClick={resetConflictPrompt}
+              disabled={saving}
+            >
+              Go back
+            </Button>
+          </div>
+        </div>
+      )}
 
       {error && <p className="mt-3 text-xs font-medium text-tide">{error}</p>}
 
       <div className="mt-6 flex gap-3">
         <Button variant="secondary" className="!flex-1 !text-ink !border-ink/20" onClick={onCancel}>
-          Cancel
+          {partialFailure ? 'Close' : 'Cancel'}
         </Button>
-        <Button variant="primary" className="!flex-1" onClick={save} disabled={saving}>
-          {saving ? 'Saving…' : 'Save booking'}
+        <Button
+          variant="primary"
+          className="!flex-1"
+          onClick={() => save()}
+          disabled={saving || partialFailure || !!conflicts}
+        >
+          {saving ? 'Saving…' : allPairs.length === 1 ? 'Save booking' : `Save ${allPairs.length} bookings`}
         </Button>
       </div>
+    </div>
     </div>
   )
 }
@@ -1084,6 +1314,7 @@ function BookingEditModal({ booking, onClose }: { booking: StoredBooking; onClos
   const days = useMemo(() => getDayOptions(30, 0), [])
   const [dayIso, setDayIso] = useState(booking.dayIso)
   const [courtId, setCourtId] = useState(booking.courtId)
+  const [sport, setSport] = useState(booking.sport ?? '')
   const [startHour, setStartHour] = useState(booking.startHour)
   const [endHour, setEndHour] = useState(booking.endHour)
   const [error, setError] = useState('')
@@ -1112,6 +1343,7 @@ function BookingEditModal({ booking, onClose }: { booking: StoredBooking; onClos
         startHour,
         endHour,
         rate: court?.rate ?? booking.rate,
+        sport: sport || undefined,
       })
       onClose()
     } catch (saveError) {
@@ -1177,6 +1409,22 @@ function BookingEditModal({ booking, onClose }: { booking: StoredBooking; onClos
               ))}
             </select>
           </Field>
+          {booking.source !== 'reclub' && (
+            <Field label="Sport">
+              <select
+                value={sport}
+                onChange={(e) => setSport(e.target.value)}
+                className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+              >
+                <option value="">Not specified</option>
+                {sports.map((item) => (
+                  <option key={item.id} value={item.name}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label="Status">
             <p className="rounded-xl border border-ink/10 bg-sand-dim px-3 py-2.5 text-sm font-semibold text-ink">
               {booking.status === 'confirmed' ? 'Confirmed' : 'Reserved'}

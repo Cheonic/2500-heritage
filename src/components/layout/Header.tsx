@@ -1,14 +1,19 @@
 import { useEffect, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { navLinks } from '../../data/nav'
 import { useActiveSection } from '../../hooks/useActiveSection'
 import Logo from '../ui/Logo'
 import Button from '../ui/Button'
+import { lockAdmin } from '../../data/adminAuth'
+import { supabase } from '../../data/supabase'
 
 export default function Header() {
   const [isOpen, setIsOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
+  const [signedIn, setSignedIn] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
   const anchorLinks = navLinks.filter((l) => !l.isRoute)
   const activeId = useActiveSection(anchorLinks.map((l) => l.href.replace('#', '')))
 
@@ -26,13 +31,51 @@ export default function Header() {
     }
   }, [isOpen])
 
+  // Track the Supabase session so the Log out button only shows while signed in.
+  useEffect(() => {
+    if (!supabase) return
+    let active = true
+    supabase.auth.getSession().then(({ data }) => {
+      if (active) setSignedIn(Boolean(data.session))
+    })
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSignedIn(Boolean(session))
+    })
+    return () => {
+      active = false
+      data.subscription.unsubscribe()
+    }
+  }, [])
+
+  async function handleLogout() {
+    setSigningOut(true)
+    try {
+      await lockAdmin()
+    } catch {
+      // Even if sign-out fails remotely, leave the admin screen.
+    } finally {
+      setSigningOut(false)
+      navigate('/')
+    }
+  }
+
   if (location.pathname === '/admin') {
     return (
       <header className="sticky top-0 z-50 border-b border-sand/10 bg-ink">
-        <div className="mx-auto flex w-full max-w-7xl items-center px-5 py-3 sm:px-8">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3 px-5 py-3 sm:px-8">
           <Link to="/" aria-label="2500 Heritage, home">
             <Logo variant="full" />
           </Link>
+          {signedIn && (
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={signingOut}
+              className="rounded-full border border-sand/25 px-4 py-2 text-sm font-medium text-sand transition-colors hover:border-citrus hover:text-citrus disabled:opacity-60"
+            >
+              {signingOut ? 'Logging out…' : 'Log out'}
+            </button>
+          )}
         </div>
       </header>
     )
@@ -144,7 +187,7 @@ export default function Header() {
         <div
           className={`min-h-0 border-t border-sand/10 ${
             isOpen
-              ? 'max-h-[calc(100dvh-4.5rem)] overflow-y-auto overscroll-contain'
+              ? 'max-h-[calc(100dvh-5.5rem)] overflow-y-auto overscroll-contain'
               : 'overflow-hidden'
           }`}
         >

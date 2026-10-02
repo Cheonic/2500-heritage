@@ -5,17 +5,18 @@ import Footer from './components/layout/Footer'
 import Hero from './components/sections/Hero'
 import About from './components/sections/About'
 import Sports from './components/sections/Sports'
-import OpenPlay from './components/sections/OpenPlay'
 import Facility from './components/sections/Facility'
 import Booking from './components/sections/Booking'
 import Gallery from './components/sections/Gallery'
 import Testimonials from './components/sections/Testimonials'
 import Contact from './components/sections/Contact'
 import Container from './components/ui/Container'
+import ChatButton from './components/ui/ChatButton'
 import AdminPage from './pages/AdminPage'
 import MyBookingsPage from './pages/MyBookingsPage'
 import { loadBookingCourts } from './data/booking'
 import { loadPaymentQrCode } from './data/paymentQr'
+import { loadGalleryImages } from './data/galleryImages'
 import { isSupabaseConfigured } from './data/supabase'
 
 /**
@@ -54,7 +55,6 @@ function HomePage() {
       <Hero />
       <About />
       <Sports />
-      <OpenPlay />
       <Facility />
       <Gallery />
       <Testimonials />
@@ -77,9 +77,10 @@ function BookingPage() {
 }
 
 function App() {
+  const { pathname } = useLocation()
   useEffect(() => {
     if (!isSupabaseConfigured) return
-    void Promise.all([loadBookingCourts(), loadPaymentQrCode()]).catch(() => {
+    void Promise.all([loadBookingCourts(), loadPaymentQrCode(), loadGalleryImages()]).catch(() => {
       // The booking and admin screens surface their own errors when remote data is needed.
     })
   }, [])
@@ -103,6 +104,7 @@ function App() {
         </Routes>
       </main>
       <Footer />
+      {pathname !== '/admin' && <ChatButton />}
     </div>
   )
 }

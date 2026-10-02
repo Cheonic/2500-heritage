@@ -26,6 +26,8 @@
   }
 
   html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
     scroll-behavior: smooth;
     scroll-padding-top: 6rem;
   }
@@ -36,6 +38,8 @@
     font-family: var(--font-body);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /* Never allow sideways page scrolling on phones (clip keeps sticky headers working). */
+    overflow-x: clip;
   }
 
   h1, h2, h3, h4 {
@@ -79,5 +83,14 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* iOS Safari zooms the page when a field under 16px is focused; keep phone fields at 16px. */
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='file']),
+  select,
+  textarea {
+    font-size: 16px;
   }
 }

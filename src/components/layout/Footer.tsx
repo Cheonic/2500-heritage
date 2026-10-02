@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { navLinks } from '../../data/nav'
 import { socialLinks } from '../../data/social'
 import { signInAdmin } from '../../data/adminAuth'
+import PasswordInput from '../ui/PasswordInput'
 import Logo from '../ui/Logo'
 import Container from '../ui/Container'
 import Button from '../ui/Button'
@@ -124,14 +125,14 @@ export default function Footer() {
 
       {loginOpen && (
         <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-ink/60 p-4"
+          className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-ink/60 p-4 sm:items-center"
           onClick={() => setLoginOpen(false)}
         >
           <section
             role="dialog"
             aria-modal="true"
             aria-labelledby="staff-login-title"
-            className="w-full max-w-sm rounded-card border border-ink/10 bg-sand p-6 shadow-2xl sm:p-8"
+            className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-sm overflow-y-auto rounded-card border border-ink/10 bg-sand p-6 shadow-2xl sm:p-8"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4">
@@ -171,9 +172,8 @@ export default function Footer() {
               <label htmlFor="staff-login-password" className="mt-4 block text-sm font-medium text-ink/75">
                 Password
               </label>
-              <input
+              <PasswordInput
                 id="staff-login-password"
-                type="password"
                 required
                 autoComplete="current-password"
                 value={password}
@@ -181,7 +181,7 @@ export default function Footer() {
                   setPassword(event.target.value)
                   setLoginError('')
                 }}
-                className="mt-2 w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all duration-200 focus:border-citrus focus:ring-4 focus:ring-citrus/15"
+                wrapperClassName="mt-2"
               />
               {loginError && (
                 <p role="alert" className="mt-2 text-xs font-medium text-tide">
