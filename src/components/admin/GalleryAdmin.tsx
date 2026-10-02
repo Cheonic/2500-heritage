@@ -89,7 +89,8 @@ function CaptionEditor({ tileId, defaultCaption }: { tileId: string; defaultCapt
 }
 
 const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp']
-const MAX_FILE_BYTES = 10 * 1024 * 1024
+const MAX_FILE_MB = 3
+const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024
 
 export default function GalleryAdmin() {
   useBookingStoreVersion() // re-render whenever photos are added or removed
@@ -111,12 +112,26 @@ export default function GalleryAdmin() {
       return
     }
 
+    const wrongType = files.filter((file) => !ACCEPTED_TYPES.includes(file.type))
+    const tooBig = files.filter((file) => ACCEPTED_TYPES.includes(file.type) && file.size > MAX_FILE_BYTES)
     const valid = files.filter((file) => ACCEPTED_TYPES.includes(file.type) && file.size <= MAX_FILE_BYTES)
-    const skipped = files.length - valid.length
     const chosen = valid.slice(0, room)
     const overLimit = valid.length - chosen.length
+
+    const sizeError = tooBig.length
+      ? `File too large: ${tooBig
+          .map((file) => `${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`)
+          .join(', ')}. Each photo must be ${MAX_FILE_MB} MB or smaller.`
+      : ''
+    const typeError = wrongType.length
+      ? `${wrongType.length} file${wrongType.length > 1 ? 's' : ''} skipped: only PNG, JPG, or WEBP images are allowed.`
+      : ''
+
     if (!chosen.length) {
-      setMessage({ tone: 'error', text: 'Choose PNG, JPG, or WEBP images under 10 MB.' })
+      setMessage({
+        tone: 'error',
+        text: [sizeError, typeError].filter(Boolean).join(' ') || `Choose PNG, JPG, or WEBP images up to ${MAX_FILE_MB} MB.`,
+      })
       return
     }
 
@@ -131,11 +146,12 @@ export default function GalleryAdmin() {
       await addGalleryPhotos(tileId, prepared)
 
       const notes: string[] = []
-      if (skipped) notes.push(`${skipped} skipped (wrong type or over 10 MB)`)
-      if (overLimit) notes.push(`${overLimit} not added (limit of ${MAX_PHOTOS_PER_TILE} per tile)`)
+      if (sizeError) notes.push(sizeError)
+      if (typeError) notes.push(typeError)
+      if (overLimit) notes.push(`${overLimit} not added (limit of ${MAX_PHOTOS_PER_TILE} per tile).`)
       setMessage({
-        tone: 'ok',
-        text: `${prepared.length} photo${prepared.length > 1 ? 's' : ''} added.${notes.length ? ` ${notes.join('; ')}.` : ''}`,
+        tone: sizeError ? 'error' : 'ok',
+        text: `${prepared.length} photo${prepared.length > 1 ? 's' : ''} added.${notes.length ? ` ${notes.join(' ')}` : ''}`,
       })
     } catch (error) {
       setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Could not save these photos.' })
@@ -243,7 +259,7 @@ export default function GalleryAdmin() {
       </div>
 
       <p className="mt-4 text-xs text-ink/50">
-        PNG, JPG, or WEBP · up to 10 MB each. You can select several files at once. Photos are resized automatically.
+        PNG, JPG, or WEBP · up to {MAX_FILE_MB} MB each. You can select several files at once. Photos are resized automatically.
       </p>
     </section>
   )
