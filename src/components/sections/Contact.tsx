@@ -57,20 +57,3 @@ function IconPin() {
     </svg>
   )
 }
-
-function IconClock() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" className="text-court-light" aria-hidden="true">
-      <circle cx="10" cy="10" r="7.3" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M10 6v4.3l3 2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function IconPhone() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" className="text-court-light" aria-hidden="true">
-      <path d="M4 3h3l1.5 4-2 1.5a10 10 0 0 0 5 5l1.5-2 4 1.5v3a1.5 1.5 0 0 1-1.6 1.5C9.5 17 3 10.5 2.5 4.6A1.5 1.5 0 0 1 4 3Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-    </svg>
-  )
-}
